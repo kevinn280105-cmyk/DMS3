@@ -480,12 +480,18 @@
     <a-entity light="type: point; color: #ffdb59; intensity: 10; distance: 15; decay: 2; castShadow: true" position="2.5 2.6 1.5" flicker="min: 8.5; max: 10.5; speed: 0.2"></a-entity>
  
     <!-- ============== ROOM: 6 SPLIT PIECES ============== -->
-    <a-entity id="wallandground" class="roompart" gltf-model="#wallandground-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="living" class="roompart" gltf-model="#living-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="kitchen" class="roompart" gltf-model="#kitchen-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="bedroom" class="roompart" gltf-model="#bedroom-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="toilet" class="roompart" gltf-model="#toilet-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="bantho" class="roompart" gltf-model="#bantho-model" position="0 0 0" tag-floors tag-colliders></a-entity>
+    <!-- minSize is per-room: kitchen still has the most mesh fragments
+         (751 raw meshes, ~139 after Blender join) even post-cleanup, so
+         it keeps a stronger filter. Rooms that were never fragmented
+         (10-32 meshes each) stay at the default 0.15 so their thinner
+         real geometry (e.g. door frames, thin shelves) still gets a
+         collider instead of being filtered away. -->
+    <a-entity id="wallandground" class="roompart" gltf-model="#wallandground-model" position="0 0 0" tag-floors tag-colliders="minSize: 0.15"></a-entity>
+    <a-entity id="living" class="roompart" gltf-model="#living-model" position="0 0 0" tag-floors tag-colliders="minSize: 0.15"></a-entity>
+    <a-entity id="kitchen" class="roompart" gltf-model="#kitchen-model" position="0 0 0" tag-floors tag-colliders="minSize: 0.3"></a-entity>
+    <a-entity id="bedroom" class="roompart" gltf-model="#bedroom-model" position="0 0 0" tag-floors tag-colliders="minSize: 0.15"></a-entity>
+    <a-entity id="toilet" class="roompart" gltf-model="#toilet-model" position="0 0 0" tag-floors tag-colliders="minSize: 0.15"></a-entity>
+    <a-entity id="bantho" class="roompart" gltf-model="#bantho-model" position="0 0 0" tag-floors tag-colliders="minSize: 0.15"></a-entity>
  
     <!-- ============== INTERACTIVE OBJECTS ============== -->
     <a-entity class="item door" gltf-model="#cua-model" position="0 0 0" tag-colliders open-door="openAngle: 90; speed: 800"></a-entity>
