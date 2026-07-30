@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Stable Quest Version</title>
+  <title>VR Room - Stable Quest Version + Fixed Sound</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -34,11 +34,34 @@
         rgba(5, 8, 5, 0.5) 100%
       );
     }
+
+    #soundButton {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 1000;
+
+      padding: 12px 18px;
+      border: 1px solid rgba(255, 255, 255, 0.75);
+      border-radius: 8px;
+
+      color: white;
+      background: rgba(0, 0, 0, 0.82);
+
+      font: 600 15px Arial, sans-serif;
+      cursor: pointer;
+    }
+
+    #soundButton:disabled {
+      opacity: 0.7;
+      cursor: default;
+    }
   </style>
 </head>
 
 <body>
   <div id="vignette"></div>
+  <button id="soundButton" type="button">ENABLE SOUND</button>
 
   <script>
     /* ============================================================
@@ -515,9 +538,18 @@
     AFRAME.registerComponent('audio-unlock', {
       init: function () {
         this.started = false;
+        this.startAudio = this.startAudio.bind(this);
+        this.playRoomSounds = this.playRoomSounds.bind(this);
 
-        this.startAudio =
-          this.startAudio.bind(this);
+        this.soundButton =
+          document.querySelector('#soundButton');
+
+        if (this.soundButton) {
+          this.soundButton.addEventListener(
+            'click',
+            this.startAudio
+          );
+        }
 
         window.addEventListener(
           'pointerdown',
@@ -558,6 +590,30 @@
               { once: true }
             );
           }
+
+          /*
+            When an ambience file finishes loading after sound was
+            already unlocked, start that sound immediately.
+          */
+          document
+            .querySelectorAll('.room-sound')
+            .forEach((entity) => {
+              entity.addEventListener(
+                'sound-loaded',
+                () => {
+                  if (!this.started) {
+                    return;
+                  }
+
+                  const sound =
+                    entity.components.sound;
+
+                  if (sound) {
+                    sound.playSound();
+                  }
+                }
+              );
+            });
         });
       },
 
@@ -580,11 +636,37 @@
           this.started = true;
           this.el.audioUnlocked = true;
 
+          if (this.soundButton) {
+            this.soundButton.textContent =
+              'SOUND ENABLED';
+
+            this.soundButton.disabled = true;
+
+            window.setTimeout(() => {
+              this.soundButton.style.display =
+                'none';
+            }, 900);
+          }
+
+          /*
+            Try immediately, then retry while the large GLB scene
+            and audio files continue loading.
+          */
           this.playRoomSounds();
 
           window.setTimeout(
-            () => this.playRoomSounds(),
+            this.playRoomSounds,
             1000
+          );
+
+          window.setTimeout(
+            this.playRoomSounds,
+            3000
+          );
+
+          window.setTimeout(
+            this.playRoomSounds,
+            6000
           );
 
           console.log('Room audio started.');
@@ -593,6 +675,11 @@
             'Audio could not start:',
             error
           );
+
+          if (this.soundButton) {
+            this.soundButton.textContent =
+              'TRY SOUND AGAIN';
+          }
         }
       },
 
@@ -862,7 +949,7 @@
       position="-2 2.3 -3"
 
       sound="
-        src: url(sounds/bedroom-fan.wav);
+        src: url(sounds/73347__noisecollector__noisy_ceiling_fan.mp3);
         autoplay: false;
         loop: true;
         positional: true;
@@ -872,25 +959,6 @@
         maxDistance: 8;
         rolloffFactor: 1.2">
     </a-entity>
-
-
-    <a-entity
-      id="bedroom-lamp-sound"
-      class="room-sound"
-      position="-2 1.5 -3"
-
-      sound="
-        src: url(sounds/lamp-buzz.wav);
-        autoplay: false;
-        loop: true;
-        positional: true;
-        volume: 0.2;
-        distanceModel: inverse;
-        refDistance: 1;
-        maxDistance: 5;
-        rolloffFactor: 1.5">
-    </a-entity>
-
 
     <a-entity
       id="bedroom-rain-sound"
@@ -944,25 +1012,6 @@
         maxDistance: 7;
         rolloffFactor: 1.3">
     </a-entity>
-
-
-    <a-entity
-      id="living-rain-sound"
-      class="room-sound"
-      position="3 1.7 -1"
-
-      sound="
-        src: url(sounds/living-room-rain.mp3);
-        autoplay: false;
-        loop: true;
-        positional: true;
-        volume: 0.3;
-        distanceModel: inverse;
-        refDistance: 1.5;
-        maxDistance: 10;
-        rolloffFactor: 1">
-    </a-entity>
-
 
     <!-- ======================================================
          INTERACTIVE DOOR
@@ -1061,7 +1110,7 @@
         fly: false"
 
       sound="
-        src: url(sounds/842186__aardsreel__footstep-floor.wav);
+        src: url(sounds/842186__aardsreal__footstep-floor.wav);
         autoplay: false;
         loop: true;
         positional: false;
