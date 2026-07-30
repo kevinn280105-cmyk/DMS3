@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Stable Quest Version + Fixed Sound</title>
+  <title>VR Room - Stable Quest Version + Reliable Sound</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -61,9 +61,154 @@
 
 <body>
   <div id="vignette"></div>
-  <button id="soundButton" type="button">ENABLE SOUND</button>
+  <button id="soundButton" type="button" onclick="enableSound()">
+    ENABLE SOUND
+  </button>
+
+  <!--
+    Native browser audio is used here because it is more reliable
+    on the Quest browser than waiting for an A-Frame sound component
+    to initialise.
+  -->
+  <audio
+    id="fanAudio"
+    src="sounds/73347__noisecollector__noisy_ceiling_fan.mp3"
+    preload="auto"
+    loop
+    playsinline>
+  </audio>
+
+  <audio
+    id="bedroomRainAudio"
+    src="sounds/bedroom-rain.wav"
+    preload="auto"
+    loop
+    playsinline>
+  </audio>
+
+  <audio
+    id="fluorescentAudio"
+    src="sounds/fluorescent-light.wav"
+    preload="auto"
+    loop
+    playsinline>
+  </audio>
+
+  <audio
+    id="tvStaticAudio"
+    src="sounds/tv-static.mp3"
+    preload="auto"
+    loop
+    playsinline>
+  </audio>
+
+  <audio
+    id="footstepAudio"
+    src="sounds/842186__aardsreal__footstep-floor.wav"
+    preload="auto"
+    loop
+    playsinline>
+  </audio>
 
   <script>
+    /* ============================================================
+       RELIABLE SOUND BUTTON
+
+       The button updates immediately, before any audio loading.
+       All play() calls begin during the same real button click,
+       which is important because browsers block automatic sound.
+    ============================================================ */
+    async function enableSound() {
+      const button =
+        document.querySelector('#soundButton');
+
+      if (!button) {
+        return;
+      }
+
+      button.textContent = 'STARTING SOUND...';
+      button.disabled = true;
+
+      const tracks = [
+        {
+          element: document.querySelector('#fanAudio'),
+          volume: 0.28
+        },
+        {
+          element: document.querySelector('#bedroomRainAudio'),
+          volume: 0.22
+        },
+        {
+          element: document.querySelector('#fluorescentAudio'),
+          volume: 0.18
+        },
+        {
+          element: document.querySelector('#tvStaticAudio'),
+          volume: 0.18
+        }
+      ];
+
+      const playPromises = tracks.map(({ element, volume }) => {
+        if (!element) {
+          return Promise.reject(
+            new Error('A sound element is missing.')
+          );
+        }
+
+        element.volume = volume;
+
+        return element.play();
+      });
+
+      const results =
+        await Promise.allSettled(playPromises);
+
+      const successful =
+        results.filter(
+          result => result.status === 'fulfilled'
+        ).length;
+
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          console.error(
+            'Sound failed:',
+            tracks[index].element
+              ? tracks[index].element.src
+              : 'missing audio element',
+            result.reason
+          );
+        }
+      });
+
+      const scene =
+        document.querySelector('a-scene');
+
+      if (successful > 0) {
+        if (scene) {
+          scene.audioUnlocked = true;
+        }
+
+        button.textContent = 'SOUND ENABLED';
+
+        window.setTimeout(() => {
+          button.style.display = 'none';
+        }, 1200);
+
+        console.log(
+          `${successful} ambience sound file(s) started.`
+        );
+      } else {
+        button.textContent = 'TRY SOUND AGAIN';
+        button.disabled = false;
+
+        console.error(
+          'No sound file could start. Check the Network and Console tabs.'
+        );
+      }
+    }
+
+    window.enableSound = enableSound;
+
     /* ============================================================
        1. FLICKERING LIGHTS
     ============================================================ */
@@ -535,167 +680,7 @@
        Audio starts after the first click, key press, controller
        trigger or after entering VR.
     ============================================================ */
-    AFRAME.registerComponent('audio-unlock', {
-      init: function () {
-        this.started = false;
-        this.startAudio = this.startAudio.bind(this);
-        this.playRoomSounds = this.playRoomSounds.bind(this);
-
-        this.soundButton =
-          document.querySelector('#soundButton');
-
-        if (this.soundButton) {
-          this.soundButton.addEventListener(
-            'click',
-            this.startAudio
-          );
-        }
-
-        window.addEventListener(
-          'pointerdown',
-          this.startAudio,
-          { once: true }
-        );
-
-        window.addEventListener(
-          'keydown',
-          this.startAudio,
-          { once: true }
-        );
-
-        this.el.addEventListener(
-          'enter-vr',
-          this.startAudio
-        );
-
-        this.el.addEventListener('loaded', () => {
-          const leftHand =
-            document.querySelector('#leftHand');
-
-          const rightHand =
-            document.querySelector('#rightHand');
-
-          if (leftHand) {
-            leftHand.addEventListener(
-              'triggerdown',
-              this.startAudio,
-              { once: true }
-            );
-          }
-
-          if (rightHand) {
-            rightHand.addEventListener(
-              'triggerdown',
-              this.startAudio,
-              { once: true }
-            );
-          }
-
-          /*
-            When an ambience file finishes loading after sound was
-            already unlocked, start that sound immediately.
-          */
-          document
-            .querySelectorAll('.room-sound')
-            .forEach((entity) => {
-              entity.addEventListener(
-                'sound-loaded',
-                () => {
-                  if (!this.started) {
-                    return;
-                  }
-
-                  const sound =
-                    entity.components.sound;
-
-                  if (sound) {
-                    sound.playSound();
-                  }
-                }
-              );
-            });
-        });
-      },
-
-      startAudio: async function () {
-        if (this.started) {
-          return;
-        }
-
-        try {
-          const audioContext =
-            THREE.AudioContext.getContext();
-
-          if (
-            audioContext.state ===
-            'suspended'
-          ) {
-            await audioContext.resume();
-          }
-
-          this.started = true;
-          this.el.audioUnlocked = true;
-
-          if (this.soundButton) {
-            this.soundButton.textContent =
-              'SOUND ENABLED';
-
-            this.soundButton.disabled = true;
-
-            window.setTimeout(() => {
-              this.soundButton.style.display =
-                'none';
-            }, 900);
-          }
-
-          /*
-            Try immediately, then retry while the large GLB scene
-            and audio files continue loading.
-          */
-          this.playRoomSounds();
-
-          window.setTimeout(
-            this.playRoomSounds,
-            1000
-          );
-
-          window.setTimeout(
-            this.playRoomSounds,
-            3000
-          );
-
-          window.setTimeout(
-            this.playRoomSounds,
-            6000
-          );
-
-          console.log('Room audio started.');
-        } catch (error) {
-          console.error(
-            'Audio could not start:',
-            error
-          );
-
-          if (this.soundButton) {
-            this.soundButton.textContent =
-              'TRY SOUND AGAIN';
-          }
-        }
-      },
-
-      playRoomSounds: function () {
-        document
-          .querySelectorAll('.room-sound')
-          .forEach((entity) => {
-            const sound =
-              entity.components.sound;
-
-            if (sound) {
-              sound.playSound();
-            }
-          });
-      }
-    });
+    /* Native audio button replaces the old audio-unlock component. */
 
 
     /* ============================================================
@@ -714,11 +699,21 @@
         this.previousPosition =
           this.el.object3D.position.clone();
 
+        this.audio =
+          document.querySelector('#footstepAudio');
+
         this.isPlaying = false;
+
+        if (this.audio) {
+          this.audio.volume = 0.5;
+        }
       },
 
       tick: function (time, deltaTime) {
-        if (!deltaTime) {
+        if (
+          !deltaTime ||
+          !this.audio
+        ) {
           return;
         }
 
@@ -733,10 +728,11 @@
           currentPosition.z -
           this.previousPosition.z;
 
-        const distance = Math.sqrt(
-          (deltaX * deltaX) +
-          (deltaZ * deltaZ)
-        );
+        const distance =
+          Math.sqrt(
+            (deltaX * deltaX) +
+            (deltaZ * deltaZ)
+          );
 
         const speed =
           distance /
@@ -746,27 +742,34 @@
           speed >= this.data.minSpeed &&
           speed <= this.data.maxSpeed;
 
-        const sound =
-          this.el.components.sound;
-
         const audioUnlocked =
           this.el.sceneEl.audioUnlocked;
 
         if (
           isWalking &&
           audioUnlocked &&
-          sound &&
           !this.isPlaying
         ) {
-          sound.playSound();
+          const playPromise =
+            this.audio.play();
+
+          if (playPromise) {
+            playPromise.catch((error) => {
+              console.error(
+                'Footstep sound failed:',
+                error
+              );
+            });
+          }
+
           this.isPlaying = true;
         } else if (
           (!isWalking ||
            !audioUnlocked) &&
-          sound &&
           this.isPlaying
         ) {
-          sound.stopSound();
+          this.audio.pause();
+          this.audio.currentTime = 0;
           this.isPlaying = false;
         }
 
@@ -779,7 +782,6 @@
 
 
   <a-scene
-    audio-unlock
 
     background="
       color: #020202"
@@ -939,79 +941,11 @@
     </a-plane>
 
 
-    <!-- ======================================================
-         POSITIONAL ROOM SOUNDS
-    ======================================================= -->
+    <!--
+         Room ambience is played by the native audio elements
+         near the top of the page.
+    -->
 
-    <a-entity
-      id="bedroom-fan-sound"
-      class="room-sound"
-      position="-2 2.3 -3"
-
-      sound="
-        src: url(sounds/73347__noisecollector__noisy_ceiling_fan.mp3);
-        autoplay: false;
-        loop: true;
-        positional: true;
-        volume: 0.45;
-        distanceModel: inverse;
-        refDistance: 1.5;
-        maxDistance: 8;
-        rolloffFactor: 1.2">
-    </a-entity>
-
-    <a-entity
-      id="bedroom-rain-sound"
-      class="room-sound"
-      position="-3 1.7 -4"
-
-      sound="
-        src: url(sounds/bedroom-rain.wav);
-        autoplay: false;
-        loop: true;
-        positional: true;
-        volume: 0.3;
-        distanceModel: inverse;
-        refDistance: 1.5;
-        maxDistance: 10;
-        rolloffFactor: 1">
-    </a-entity>
-
-
-    <a-entity
-      id="living-tv-sound"
-      class="room-sound"
-      position="2 1.1 0"
-
-      sound="
-        src: url(sounds/tv-static.mp3);
-        autoplay: false;
-        loop: true;
-        positional: true;
-        volume: 0.35;
-        distanceModel: inverse;
-        refDistance: 1;
-        maxDistance: 8;
-        rolloffFactor: 1.4">
-    </a-entity>
-
-
-    <a-entity
-      id="living-light-sound"
-      class="room-sound"
-      position="2 2.5 0"
-
-      sound="
-        src: url(sounds/fluorescent-light.wav);
-        autoplay: false;
-        loop: true;
-        positional: true;
-        volume: 0.25;
-        distanceModel: inverse;
-        refDistance: 1;
-        maxDistance: 7;
-        rolloffFactor: 1.3">
-    </a-entity>
 
     <!-- ======================================================
          INTERACTIVE DOOR
@@ -1109,12 +1043,6 @@
         controls: gamepad, keyboard, touch;
         fly: false"
 
-      sound="
-        src: url(sounds/842186__aardsreal__footstep-floor.wav);
-        autoplay: false;
-        loop: true;
-        positional: false;
-        volume: 0.55"
 
       footstep-player="
         minSpeed: 0.02;
