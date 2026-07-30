@@ -221,7 +221,14 @@
        sang '.roompart, .item, .static-collider'.
     ============================================================ */
     AFRAME.registerComponent('simple-collider', {
-      schema: { objects: { default: '.roompart, .item, .static-collider' }, radius: { default: 0.4 } },
+      schema: {
+  objects: {
+    default: '.item, .static-collider'
+  },
+  radius: {
+    default: 0.4
+  }
+},
       init: function () {
         this.raycaster = new THREE.Raycaster();
         this.prevWorldPos = new THREE.Vector3();
