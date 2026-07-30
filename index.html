@@ -2,194 +2,383 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <title>VR Room - Split Assets</title>
+  <title>VR Room - Split Assets + Sound</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
+
   <style>
     body { margin: 0; }
+
     #vignette {
-      position: fixed; inset: 0; pointer-events: none; z-index: 999;
-      background: radial-gradient(ellipse at center, rgba(0,0,0,0) 50%, rgba(5,8,5,0.5) 100%);
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 999;
+      background: radial-gradient(
+        ellipse at center,
+        rgba(0,0,0,0) 50%,
+        rgba(5,8,5,0.5) 100%
+      );
     }
   </style>
 </head>
+
 <body>
- 
+
   <div id="vignette"></div>
- 
+
   <script>
     /* ============================================================
        DEBUG SWITCH
-       -------------------------------------------------------------
-       Set to true once, load the scene, open the browser / Quest
-       console, and you'll see every mesh name printed per room
-       part. Use that list to fix "floorNames" below if teleport
-       still can't find your real floor names. Set back to false
-       once you're done (console logging has a small cost too).
     ============================================================ */
-    const DEBUG_LOG_MESH_NAMES = false;
- 
+    const DEBUG_LOG_MESH_NAMES = true;
+
+
     /* ============================================================
        Component 1: flicker
     ============================================================ */
     AFRAME.registerComponent('flicker', {
-      schema: { min: { default: 0.8 }, max: { default: 1.2 }, speed: { default: 0.5 } },
-      init: function () { this.seed = Math.random() * 1000; },
+      schema: {
+        min: { default: 0.8 },
+        max: { default: 1.2 },
+        speed: { default: 0.5 }
+      },
+
+      init: function () {
+        this.seed = Math.random() * 1000;
+      },
+
       tick: function (t) {
         const time = (t * 0.001 * this.data.speed) + this.seed;
-        const noise = (Math.sin(time * 6.1) + Math.sin(time * 2.3) + Math.sin(time * 11.7)) / 3;
-        this.el.setAttribute('light', 'intensity', this.data.min + ((noise + 1) / 2) * (this.data.max - this.data.min));
+        const noise = (
+          Math.sin(time * 6.1) +
+          Math.sin(time * 2.3) +
+          Math.sin(time * 11.7)
+        ) / 3;
+
+        this.el.setAttribute(
+          'light',
+          'intensity',
+          this.data.min +
+          ((noise + 1) / 2) *
+          (this.data.max - this.data.min)
+        );
       }
     });
- 
+
+
     /* ============================================================
        Component 2: tag-floors
-       -------------------------------------------------------------
-       Falls back to a bounding-box floor if none of the named
-       floor meshes are found inside a given room part, so teleport
-       always has something to land on even before floor names are
-       re-synced to the split .glb files.
     ============================================================ */
     AFRAME.registerComponent('tag-floors', {
-      schema: { floorNames: { default: ['san nha phong khach','san nha phoing an','san nha TOILET','san giat do','SAN PHONG NGU'] } },
+      schema: {
+        floorNames: {
+          default: [
+            'san nha phong khach',
+            'san nha phoing an',
+            'san nha TOILET',
+            'san giat do',
+            'SAN PHONG NGU'
+          ]
+        }
+      },
+
       init: function () {
         this.el.addEventListener('model-loaded', () => {
           const root = this.el.getObject3D('mesh');
           if (!root) return;
- 
+
           if (DEBUG_LOG_MESH_NAMES) {
             console.log('--- Mesh names in', this.el.id, '---');
-            root.traverse((n) => { if (n.name) console.log('  ', n.name); });
+
+            root.traverse((node) => {
+              if (node.name) {
+                console.log('  ', node.name);
+              }
+            });
           }
- 
+
           const floorContainer = document.createElement('a-entity');
-          floorContainer.setAttribute('id', 'floor-colliders-' + this.el.id);
+
+          floorContainer.setAttribute(
+            'id',
+            'floor-colliders-' + this.el.id
+          );
+
           this.el.sceneEl.appendChild(floorContainer);
- 
+
           let foundAny = false;
- 
+
           this.data.floorNames.forEach((name) => {
-            const obj = root.getObjectByName(name);
-            if (!obj) return;
+            const object = root.getObjectByName(name);
+            if (!object) return;
+
             foundAny = true;
-            const box = new THREE.Box3().setFromObject(obj);
-            const size = new THREE.Vector3(); const center = new THREE.Vector3();
-            box.getSize(size); box.getCenter(center);
+
+            const box = new THREE.Box3().setFromObject(object);
+            const size = new THREE.Vector3();
+            const center = new THREE.Vector3();
+
+            box.getSize(size);
+            box.getCenter(center);
+
             const plane = document.createElement('a-plane');
-            plane.setAttribute('class', 'floor'); plane.setAttribute('rotation', '-90 0 0');
-            plane.setAttribute('width', Math.max(size.x, 0.1)); plane.setAttribute('height', Math.max(size.z, 0.1));
-            plane.setAttribute('position', `${center.x} ${box.min.y + 0.02} ${center.z}`);
-            plane.setAttribute('visible', 'false'); plane.setAttribute('data-floor-name', name);
+
+            plane.setAttribute('class', 'floor');
+            plane.setAttribute('rotation', '-90 0 0');
+            plane.setAttribute('width', Math.max(size.x, 0.1));
+            plane.setAttribute('height', Math.max(size.z, 0.1));
+
+            plane.setAttribute(
+              'position',
+              `${center.x} ${box.min.y + 0.02} ${center.z}`
+            );
+
+            plane.setAttribute('visible', 'false');
+            plane.setAttribute('data-floor-name', name);
+
             floorContainer.appendChild(plane);
           });
- 
+
           if (!foundAny) {
             const box = new THREE.Box3().setFromObject(root);
+
             if (!box.isEmpty()) {
-              const size = new THREE.Vector3(); const center = new THREE.Vector3();
-              box.getSize(size); box.getCenter(center);
+              const size = new THREE.Vector3();
+              const center = new THREE.Vector3();
+
+              box.getSize(size);
+              box.getCenter(center);
+
               const plane = document.createElement('a-plane');
+
               plane.setAttribute('class', 'floor');
               plane.setAttribute('rotation', '-90 0 0');
               plane.setAttribute('width', Math.max(size.x, 0.1));
               plane.setAttribute('height', Math.max(size.z, 0.1));
-              plane.setAttribute('position', `${center.x} ${box.min.y + 0.02} ${center.z}`);
+
+              plane.setAttribute(
+                'position',
+                `${center.x} ${box.min.y + 0.02} ${center.z}`
+              );
+
               plane.setAttribute('visible', 'false');
-              plane.setAttribute('data-floor-name', 'fallback-' + this.el.id);
+
+              plane.setAttribute(
+                'data-floor-name',
+                'fallback-' + this.el.id
+              );
+
               floorContainer.appendChild(plane);
+
               if (DEBUG_LOG_MESH_NAMES) {
-                console.log(this.el.id, ': no named floor matched — created fallback floor from bounding box.');
+                console.log(
+                  this.el.id,
+                  ': no named floor matched — created fallback floor from bounding box.'
+                );
               }
             }
           }
         });
       }
     });
- 
+
+
     /* ============================================================
        Component 3: tag-colliders
-       -------------------------------------------------------------
-       Builds simplified invisible box colliders (.static-collider)
-       for meshes in each .roompart entity. These are what movement
-       and grabbing actually collide against — much cheaper than
-       raycasting full room geometry every frame.
     ============================================================ */
     AFRAME.registerComponent('tag-colliders', {
-      schema: { objectKeys: { default: ['table', 'chair', 'door'] } },
+      schema: {
+        objectKeys: {
+          default: ['table', 'chair', 'door']
+        }
+      },
+
       init: function () {
         this.el.addEventListener('model-loaded', () => {
-          const root = this.el.getObject3D('mesh'); if (!root) return;
+          const root = this.el.getObject3D('mesh');
+          if (!root) return;
+
           root.updateMatrixWorld(true);
+
           const colliderContainer = document.createElement('a-entity');
-          colliderContainer.setAttribute('id', 'static-colliders-' + (this.el.id || Math.random().toString(36).slice(2)));
+
+          colliderContainer.setAttribute(
+            'id',
+            'static-colliders-' +
+            (
+              this.el.id ||
+              Math.random().toString(36).slice(2)
+            )
+          );
+
           this.el.sceneEl.appendChild(colliderContainer);
- 
+
           const addColliderForMesh = (mesh) => {
             const box = new THREE.Box3().setFromObject(mesh);
             if (box.isEmpty()) return;
-            const size = new THREE.Vector3(); const center = new THREE.Vector3();
-            box.getSize(size); box.getCenter(center);
+
+            const size = new THREE.Vector3();
+            const center = new THREE.Vector3();
+
+            box.getSize(size);
+            box.getCenter(center);
+
             let horizontalExpand = 1.1;
             const verticalShrink = 0.92;
-            const longRatioX = size.x / Math.max(size.z, 0.001);
-            const longRatioZ = size.z / Math.max(size.x, 0.001);
+
+            const longRatioX =
+              size.x /
+              Math.max(size.z, 0.001);
+
+            const longRatioZ =
+              size.z /
+              Math.max(size.x, 0.001);
+
             const smallThreshold = 0.4;
+
             if (longRatioX > 2 || longRatioZ > 2) {
               horizontalExpand = 1.02;
-            } else if (size.x < smallThreshold && size.z < smallThreshold) {
+            } else if (
+              size.x < smallThreshold &&
+              size.z < smallThreshold
+            ) {
               horizontalExpand = 1.2;
-            } else if (size.x < smallThreshold || size.z < smallThreshold) {
+            } else if (
+              size.x < smallThreshold ||
+              size.z < smallThreshold
+            ) {
               horizontalExpand = 1.15;
             }
+
             const isChairMesh = (node) => {
               let current = node;
+
               while (current) {
-                if (current.name && /chair/i.test(current.name)) return true;
+                if (
+                  current.name &&
+                  /chair/i.test(current.name)
+                ) {
+                  return true;
+                }
+
                 current = current.parent;
               }
+
               return false;
             };
+
             const isChair = isChairMesh(mesh);
-            const isChairFrame = mesh.name && /leg|support|spine|back|seat|backrest/i.test(mesh.name);
+
+            const isChairFrame =
+              mesh.name &&
+              /leg|support|spine|back|seat|backrest/i
+                .test(mesh.name);
+
             if (isChair) {
-              horizontalExpand = Math.min(horizontalExpand, 0.92);
+              horizontalExpand =
+                Math.min(horizontalExpand, 0.92);
+
               size.y *= 0.95;
-              if (size.x < 0.18 || size.z < 0.18) {
-                horizontalExpand = Math.min(horizontalExpand, 0.88);
+
+              if (
+                size.x < 0.18 ||
+                size.z < 0.18
+              ) {
+                horizontalExpand =
+                  Math.min(horizontalExpand, 0.88);
               }
             }
+
             if (isChairFrame) {
-              horizontalExpand = Math.min(horizontalExpand, 0.95);
+              horizontalExpand =
+                Math.min(horizontalExpand, 0.95);
             }
+
             size.x *= horizontalExpand;
             size.z *= horizontalExpand;
             size.y *= verticalShrink;
-            const quat = mesh.getWorldQuaternion(new THREE.Quaternion());
-            const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
-            const collider = document.createElement('a-entity');
-            collider.setAttribute('class', 'static-collider');
-            collider.setAttribute('geometry', `primitive: box; width: ${Math.max(size.x, 0.01)}; height: ${Math.max(size.y, 0.01)}; depth: ${Math.max(size.z, 0.01)}`);
-            collider.setAttribute('position', `${center.x} ${center.y} ${center.z}`);
-            collider.setAttribute('rotation', `${THREE.MathUtils.radToDeg(euler.x)} ${THREE.MathUtils.radToDeg(euler.y)} ${THREE.MathUtils.radToDeg(euler.z)}`);
+
+            const quaternion =
+              mesh.getWorldQuaternion(
+                new THREE.Quaternion()
+              );
+
+            const euler =
+              new THREE.Euler()
+                .setFromQuaternion(
+                  quaternion,
+                  'YXZ'
+                );
+
+            const collider =
+              document.createElement('a-entity');
+
+            collider.setAttribute(
+              'class',
+              'static-collider'
+            );
+
+            collider.setAttribute(
+              'geometry',
+              `primitive: box; ` +
+              `width: ${Math.max(size.x, 0.01)}; ` +
+              `height: ${Math.max(size.y, 0.01)}; ` +
+              `depth: ${Math.max(size.z, 0.01)}`
+            );
+
+            collider.setAttribute(
+              'position',
+              `${center.x} ${center.y} ${center.z}`
+            );
+
+            collider.setAttribute(
+              'rotation',
+              `${THREE.MathUtils.radToDeg(euler.x)} ` +
+              `${THREE.MathUtils.radToDeg(euler.y)} ` +
+              `${THREE.MathUtils.radToDeg(euler.z)}`
+            );
+
             collider.setAttribute('visible', 'false');
+
             colliderContainer.appendChild(collider);
           };
- 
-          root.traverse(node => {
+
+          root.traverse((node) => {
             if (!node.isMesh) return;
+
             let current = node;
             let matches = false;
+
             while (current) {
-              if (current.name && this.data.objectKeys.some(key => current.name.toLowerCase().includes(key))) {
+              if (
+                current.name &&
+                this.data.objectKeys.some(
+                  (key) =>
+                    current.name
+                      .toLowerCase()
+                      .includes(key)
+                )
+              ) {
                 matches = true;
                 break;
               }
+
               current = current.parent;
             }
-            if (!matches && (this.el.classList.contains('roompart') || this.el.classList.contains('door'))) {
+
+            if (
+              !matches &&
+              (
+                this.el.classList.contains('roompart') ||
+                this.el.classList.contains('door')
+              )
+            ) {
               matches = true;
             }
+
             if (matches) {
               addColliderForMesh(node);
             }
@@ -197,312 +386,955 @@
         });
       }
     });
- 
+
+
     /* ============================================================
-       Component 4: simple-collider (player movement collision)
-       -------------------------------------------------------------
-       PERFORMANCE FIX (this was the freeze):
-       - Only raycasts against ".item" and ".static-collider" — the
-         lightweight boxes tag-colliders builds — never against the
-         full high-poly ".roompart" room meshes. Raycasting real
-         room geometry every frame was the main cause of freezing
-         once movement actually started working.
-       - The mesh list used to be rebuilt from scratch (querySelectorAll
-         + full traverse) on every single tick. It's now cached and
-         refreshed on an interval instead, so per-frame cost is just
-         a few raycasts against a handful of boxes.
+       Component 4: simple-collider
+
+       PERFORMANCE FIX:
+       Only lightweight .item and .static-collider meshes are used.
+       The six full .roompart GLB meshes are no longer checked every
+       frame.
     ============================================================ */
     AFRAME.registerComponent('simple-collider', {
-      schema: { objects: { default: '.item, .static-collider' }, radius: { default: 0.4 } },
+      schema: {
+        objects: {
+          default: '.item, .static-collider'
+        },
+
+        radius: {
+          default: 0.4
+        }
+      },
+
       init: function () {
         this.raycaster = new THREE.Raycaster();
         this.prevWorldPos = new THREE.Vector3();
         this.prevLocalPos = new THREE.Vector3();
         this.dir = new THREE.Vector3();
         this.side = new THREE.Vector3();
-        this.meshCache = [];
- 
-        this.refreshMeshCache();
-        this.cacheInterval = setInterval(() => this.refreshMeshCache(), 1000);
- 
+
         setTimeout(() => {
-          this.el.object3D.getWorldPosition(this.prevWorldPos);
-          this.prevLocalPos.copy(this.el.object3D.position);
+          this.el.object3D.getWorldPosition(
+            this.prevWorldPos
+          );
+
+          this.prevLocalPos.copy(
+            this.el.object3D.position
+          );
         }, 200);
       },
-      refreshMeshCache: function () {
+
+      getCollisionMeshes: function (heldEl) {
         const meshes = [];
-        const els = this.el.sceneEl.querySelectorAll(this.data.objects);
-        els.forEach(el => {
-          const root = el.getObject3D('mesh');
+
+        const elements =
+          this.el.sceneEl.querySelectorAll(
+            this.data.objects
+          );
+
+        elements.forEach((element) => {
+          if (element === heldEl) return;
+
+          const root = element.getObject3D('mesh');
           if (!root) return;
+
           root.updateMatrixWorld(true);
-          root.traverse(node => {
+
+          root.traverse((node) => {
             if (node.isMesh) {
-              node.userData.__colliderOwnerEl = el;
               meshes.push(node);
             }
           });
         });
-        this.meshCache = meshes;
+
+        return meshes;
       },
+
       tick: function () {
-        const currentWorldPos = new THREE.Vector3();
-        this.el.object3D.getWorldPosition(currentWorldPos);
-        this.dir.subVectors(currentWorldPos, this.prevWorldPos);
-        const dist = this.dir.length();
-        if (dist < 0.001) return;
+        const currentWorldPos =
+          new THREE.Vector3();
+
+        this.el.object3D.getWorldPosition(
+          currentWorldPos
+        );
+
+        this.dir.subVectors(
+          currentWorldPos,
+          this.prevWorldPos
+        );
+
+        const distance = this.dir.length();
+        if (distance < 0.001) return;
+
         this.dir.normalize();
- 
-        const heldItem = this.el.sceneEl.heldItem;
-        const heldEl = heldItem ? heldItem.el : null;
-        const meshes = heldEl
-          ? this.meshCache.filter(m => m.userData.__colliderOwnerEl !== heldEl)
-          : this.meshCache;
- 
+
+        const heldItem =
+          this.el.sceneEl.heldItem;
+
+        const heldEl =
+          heldItem
+            ? heldItem.el
+            : null;
+
+        const meshes =
+          this.getCollisionMeshes(heldEl);
+
         if (!meshes.length) {
           this.prevWorldPos.copy(currentWorldPos);
-          this.prevLocalPos.copy(this.el.object3D.position);
+
+          this.prevLocalPos.copy(
+            this.el.object3D.position
+          );
+
           return;
         }
- 
-        this.side.set(-this.dir.z, 0, this.dir.x);
-        const r = this.data.radius;
+
+        this.side.set(
+          -this.dir.z,
+          0,
+          this.dir.x
+        );
+
+        const radius = this.data.radius;
         const heights = [0.4, 0.8, 1.2];
-        const lateralOffsets = [0, -r * 0.5, r * 0.5];
- 
+
+        const lateralOffsets = [
+          0,
+          -radius * 0.5,
+          radius * 0.5
+        ];
+
         let hit = false;
+
         outer:
-        for (let h of heights) {
-          for (let off of lateralOffsets) {
-            const origin = this.prevWorldPos.clone();
-            origin.y = this.prevWorldPos.y - 1.1 + h;
-            origin.addScaledVector(this.side, off);
-            this.raycaster.set(origin, this.dir);
-            this.raycaster.far = dist + r;
-            const intersects = this.raycaster.intersectObjects(meshes, true);
-            if (intersects.length > 0 && intersects[0].distance <= dist + r) {
+        for (const height of heights) {
+          for (const offset of lateralOffsets) {
+            const origin =
+              this.prevWorldPos.clone();
+
+            origin.y =
+              this.prevWorldPos.y -
+              1.1 +
+              height;
+
+            origin.addScaledVector(
+              this.side,
+              offset
+            );
+
+            this.raycaster.set(
+              origin,
+              this.dir
+            );
+
+            this.raycaster.far =
+              distance + radius;
+
+            const intersections =
+              this.raycaster.intersectObjects(
+                meshes,
+                true
+              );
+
+            if (
+              intersections.length > 0 &&
+              intersections[0].distance <=
+                distance + radius
+            ) {
               hit = true;
               break outer;
             }
           }
         }
- 
+
         if (hit) {
-          this.el.object3D.position.copy(this.prevLocalPos);
+          this.el.object3D.position.copy(
+            this.prevLocalPos
+          );
         } else {
-          this.prevWorldPos.copy(currentWorldPos);
-          this.prevLocalPos.copy(this.el.object3D.position);
+          this.prevWorldPos.copy(
+            currentWorldPos
+          );
+
+          this.prevLocalPos.copy(
+            this.el.object3D.position
+          );
         }
-      },
-      remove: function () {
-        if (this.cacheInterval) clearInterval(this.cacheInterval);
       }
     });
- 
+
+
     /* ============================================================
        Component 5: head-bob
     ============================================================ */
     AFRAME.registerComponent('head-bob', {
-      schema: { amount: { default: 0.03 }, speed: { default: 12 } },
-      init: function () {
-        this.baseY = this.el.object3D.position.y; this.time = 0;
-        this.prevPos = new THREE.Vector3(); this.el.object3D.getWorldPosition(this.prevPos);
+      schema: {
+        amount: { default: 0.03 },
+        speed: { default: 12 }
       },
+
+      init: function () {
+        this.baseY =
+          this.el.object3D.position.y;
+
+        this.time = 0;
+
+        this.prevPos =
+          new THREE.Vector3();
+
+        this.el.object3D.getWorldPosition(
+          this.prevPos
+        );
+      },
+
       tick: function (t, dt) {
-        let currentPos = new THREE.Vector3(); this.el.object3D.getWorldPosition(currentPos);
-        let dx = currentPos.x - this.prevPos.x; let dz = currentPos.z - this.prevPos.z; let dist = Math.sqrt(dx*dx + dz*dz);
-        if (dist > 0.001 && dist < 0.5) {
-          this.time += dt * 0.001 * this.data.speed;
-          this.el.object3D.position.y = this.baseY + Math.sin(this.time) * this.data.amount;
+        const currentPos =
+          new THREE.Vector3();
+
+        this.el.object3D.getWorldPosition(
+          currentPos
+        );
+
+        const dx =
+          currentPos.x -
+          this.prevPos.x;
+
+        const dz =
+          currentPos.z -
+          this.prevPos.z;
+
+        const distance =
+          Math.sqrt(
+            dx * dx +
+            dz * dz
+          );
+
+        if (
+          distance > 0.001 &&
+          distance < 0.5
+        ) {
+          this.time +=
+            dt *
+            0.001 *
+            this.data.speed;
+
+          this.el.object3D.position.y =
+            this.baseY +
+            Math.sin(this.time) *
+            this.data.amount;
         } else {
-          this.el.object3D.position.y = THREE.MathUtils.lerp(this.el.object3D.position.y, this.baseY, 0.1);
+          this.el.object3D.position.y =
+            THREE.MathUtils.lerp(
+              this.el.object3D.position.y,
+              this.baseY,
+              0.1
+            );
         }
+
         this.prevPos.copy(currentPos);
       }
     });
- 
+
+
     /* ============================================================
        Component 6: grabbable
-       -------------------------------------------------------------
-       Listens for "mousedown", which now fires from either:
-       - the desktop mouse cursor (#cam's a-cursor), or
-       - the left VR controller's trigger (mapped via cursor
-         downEvents/upEvents below), whichever the ray is hitting.
     ============================================================ */
     AFRAME.registerComponent('grabbable', {
       init: function () {
         this.isGrabbed = false;
         this.cam = document.querySelector('#cam');
-        this.dropRay = new THREE.Raycaster();
+
+        this.dropRay =
+          new THREE.Raycaster();
+
         this.dropRay.far = 4;
- 
+
         this.el.addEventListener('mousedown', () => {
           const scene = this.el.sceneEl;
- 
+
           if (!this.isGrabbed) {
-            if (scene.heldItem && scene.heldItem !== this) return;
- 
+            if (
+              scene.heldItem &&
+              scene.heldItem !== this
+            ) {
+              return;
+            }
+
             this.isGrabbed = true;
             scene.heldItem = this;
-            this.cam.object3D.attach(this.el.object3D);
-            this.el.object3D.position.set(0, -0.3, -1);
+
+            this.cam.object3D.attach(
+              this.el.object3D
+            );
+
+            this.el.object3D.position.set(
+              0,
+              -0.3,
+              -1
+            );
           } else {
             this.isGrabbed = false;
             scene.heldItem = null;
- 
-            const worldPos = new THREE.Vector3();
-            this.el.object3D.getWorldPosition(worldPos);
- 
-            this.el.sceneEl.object3D.attach(this.el.object3D);
- 
+
+            const worldPos =
+              new THREE.Vector3();
+
+            this.el.object3D.getWorldPosition(
+              worldPos
+            );
+
+            this.el.sceneEl.object3D.attach(
+              this.el.object3D
+            );
+
             const colliders = [];
-            Array.from(this.el.sceneEl.querySelectorAll('.roompart, .item')).forEach(el => {
-              if (el === this.el) return;
-              const mesh = el.getObject3D('mesh');
+
+            Array.from(
+              this.el.sceneEl.querySelectorAll(
+                '.roompart, .item'
+              )
+            ).forEach((element) => {
+              if (element === this.el) return;
+
+              const mesh =
+                element.getObject3D('mesh');
+
               if (!mesh) return;
+
               mesh.updateMatrixWorld(true);
-              mesh.traverse(node => {
-                if (node.isMesh) colliders.push(node);
+
+              mesh.traverse((node) => {
+                if (node.isMesh) {
+                  colliders.push(node);
+                }
               });
             });
- 
+
             if (colliders.length) {
               this.dropRay.set(
-                new THREE.Vector3(worldPos.x, worldPos.y + 1, worldPos.z),
-                new THREE.Vector3(0, -1, 0)
+                new THREE.Vector3(
+                  worldPos.x,
+                  worldPos.y + 1,
+                  worldPos.z
+                ),
+
+                new THREE.Vector3(
+                  0,
+                  -1,
+                  0
+                )
               );
-              const hit = this.dropRay.intersectObjects(colliders, true)[0];
+
+              const hit =
+                this.dropRay.intersectObjects(
+                  colliders,
+                  true
+                )[0];
+
               if (hit) {
-                this.el.object3D.position.y = hit.point.y + 0.03;
+                this.el.object3D.position.y =
+                  hit.point.y + 0.03;
               }
             }
           }
         });
       }
     });
- 
+
+
     /* ============================================================
-       Component 7: open-door (NEW)
-       -------------------------------------------------------------
-       Makes the door actually respond to interaction: clicking it
-       (mousedown, from desktop cursor or VR controller trigger)
-       swings it open/closed around its own Y axis. If it swings
-       from the wrong point (center instead of the hinge edge), the
-       door's pivot needs to be re-set in Blender to sit at the
-       hinge, since this rotates around whatever origin the model
-       already has.
+       Component 7: audio-unlock
+
+       No visible start screen. The room sounds begin after the
+       first click, key press, controller trigger, or entering VR.
     ============================================================ */
-    AFRAME.registerComponent('open-door', {
-      schema: { openAngle: { default: 90 }, speed: { default: 800 } },
+    AFRAME.registerComponent('audio-unlock', {
       init: function () {
-        this.isOpen = false;
-        const rot = this.el.getAttribute('rotation') || { x: 0, y: 0, z: 0 };
-        this.closedY = rot.y || 0;
-        this.el.addEventListener('mousedown', () => {
-          this.isOpen = !this.isOpen;
-          const targetY = this.isOpen ? this.closedY + this.data.openAngle : this.closedY;
-          this.el.setAttribute('animation__door', {
-            property: 'rotation.y',
-            to: targetY,
-            dur: this.data.speed,
-            easing: 'easeInOutQuad'
-          });
+        this.started = false;
+
+        this.startAudio =
+          this.startAudio.bind(this);
+
+        this.playRoomSounds =
+          this.playRoomSounds.bind(this);
+
+        window.addEventListener(
+          'pointerdown',
+          this.startAudio,
+          { once: true }
+        );
+
+        window.addEventListener(
+          'keydown',
+          this.startAudio,
+          { once: true }
+        );
+
+        this.el.addEventListener(
+          'enter-vr',
+          this.startAudio
+        );
+
+        this.el.addEventListener('loaded', () => {
+          const leftHand =
+            document.querySelector('#leftHand');
+
+          const rightHand =
+            document.querySelector('#rightHand');
+
+          if (leftHand) {
+            leftHand.addEventListener(
+              'triggerdown',
+              this.startAudio,
+              { once: true }
+            );
+          }
+
+          if (rightHand) {
+            rightHand.addEventListener(
+              'triggerdown',
+              this.startAudio,
+              { once: true }
+            );
+          }
         });
+      },
+
+      startAudio: async function () {
+        if (this.started) return;
+
+        try {
+          const audioContext =
+            THREE.AudioContext.getContext();
+
+          if (
+            audioContext.state ===
+            'suspended'
+          ) {
+            await audioContext.resume();
+          }
+
+          this.started = true;
+          this.el.audioUnlocked = true;
+
+          this.playRoomSounds();
+
+          window.setTimeout(
+            this.playRoomSounds,
+            800
+          );
+
+          window.setTimeout(
+            this.playRoomSounds,
+            2000
+          );
+
+          console.log('Room audio unlocked.');
+        } catch (error) {
+          console.error(
+            'Audio could not start:',
+            error
+          );
+        }
+      },
+
+      playRoomSounds: function () {
+        document
+          .querySelectorAll('.room-sound')
+          .forEach((entity) => {
+            const sound =
+              entity.components.sound;
+
+            if (
+              sound &&
+              !sound.isPlaying
+            ) {
+              sound.playSound();
+            }
+          });
       }
     });
- 
+
+
+    /* ============================================================
+       Component 8: footstep-player
+    ============================================================ */
+    AFRAME.registerComponent('footstep-player', {
+      schema: {
+        minSpeed: { default: 0.02 },
+        maxSpeed: { default: 4 }
+      },
+
+      init: function () {
+        this.previousLocalPosition =
+          this.el.object3D.position.clone();
+
+        this.isPlaying = false;
+      },
+
+      tick: function (time, deltaTime) {
+        if (!deltaTime) return;
+
+        const currentLocalPosition =
+          this.el.object3D.position;
+
+        const deltaX =
+          currentLocalPosition.x -
+          this.previousLocalPosition.x;
+
+        const deltaZ =
+          currentLocalPosition.z -
+          this.previousLocalPosition.z;
+
+        const horizontalDistance =
+          Math.sqrt(
+            deltaX * deltaX +
+            deltaZ * deltaZ
+          );
+
+        const speed =
+          horizontalDistance /
+          (deltaTime / 1000);
+
+        const isWalking =
+          speed >= this.data.minSpeed &&
+          speed <= this.data.maxSpeed;
+
+        const sound =
+          this.el.components.sound;
+
+        const audioUnlocked =
+          this.el.sceneEl.audioUnlocked;
+
+        if (
+          isWalking &&
+          audioUnlocked &&
+          sound &&
+          !this.isPlaying
+        ) {
+          sound.playSound();
+          this.isPlaying = true;
+        } else if (
+          (!isWalking || !audioUnlocked) &&
+          sound &&
+          this.isPlaying
+        ) {
+          sound.stopSound();
+          this.isPlaying = false;
+        }
+
+        this.previousLocalPosition.copy(
+          currentLocalPosition
+        );
+      }
+    });
   </script>
- 
+
+
   <a-scene
-    fog="type: exponential; color: #050805; density: 0.04"
-    background="color: #020202"
-    shadow="type: pcfsoft"
-    renderer="colorManagement: true; physicallyCorrectLights: true;">
+    audio-unlock
+
+    fog="
+      type: exponential;
+      color: #050805;
+      density: 0.04"
+
+    background="
+      color: #020202"
+
+    shadow="
+      type: pcfsoft"
+
+    renderer="
+      colorManagement: true;
+      physicallyCorrectLights: true;">
+
+
     <a-assets>
-      <a-asset-item id="bantho-model" src="bantho.glb"></a-asset-item>
-      <a-asset-item id="bedroom-model" src="bedroomasset.glb"></a-asset-item>
-      <a-asset-item id="kitchen-model" src="kitchenasset.glb"></a-asset-item>
-      <a-asset-item id="living-model" src="livingasset.glb"></a-asset-item>
-      <a-asset-item id="toilet-model" src="toiletasset.glb"></a-asset-item>
-      <a-asset-item id="wallandground-model" src="wallandground.glb"></a-asset-item>
- 
-      <a-asset-item id="cua-model" src="cua.glb"></a-asset-item>
-      <a-asset-item id="teddy-model" src="teddy.glb"></a-asset-item>
-      <a-asset-item id="hairpin-model" src="hairpin.glb"></a-asset-item>
+      <a-asset-item
+        id="bantho-model"
+        src="bantho.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="bedroom-model"
+        src="bedroomasset.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="kitchen-model"
+        src="kitchenasset.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="living-model"
+        src="livingasset.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="toilet-model"
+        src="toiletasset.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="wallandground-model"
+        src="wallandground.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="cua-model"
+        src="cua.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="teddy-model"
+        src="teddy.glb">
+      </a-asset-item>
+
+      <a-asset-item
+        id="hairpin-model"
+        src="hairpin.glb">
+      </a-asset-item>
     </a-assets>
- 
-    <!-- ============== LIGHTING ============== -->
-    <a-light type="ambient" color="#1c261c" intensity="0.45"></a-light>
-    <a-entity light="type: point; color: #7cb860; intensity: 8; distance: 12; decay: 2; castShadow: true" position="-3.5 2.6 -1" flicker="min: 6.5; max: 8.5; speed: 0.3"></a-entity>
-    <a-entity light="type: point; color: #ffdb59; intensity: 10; distance: 15; decay: 2; castShadow: true" position="2.5 2.6 1.5" flicker="min: 8.5; max: 10.5; speed: 0.2"></a-entity>
- 
-    <!-- ============== ROOM: 6 SPLIT PIECES ============== -->
-    <a-entity id="wallandground" class="roompart" gltf-model="#wallandground-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="living" class="roompart" gltf-model="#living-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="kitchen" class="roompart" gltf-model="#kitchen-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="bedroom" class="roompart" gltf-model="#bedroom-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="toilet" class="roompart" gltf-model="#toilet-model" position="0 0 0" tag-floors tag-colliders></a-entity>
-    <a-entity id="bantho" class="roompart" gltf-model="#bantho-model" position="0 0 0" tag-floors tag-colliders></a-entity>
- 
-    <!-- ============== INTERACTIVE OBJECTS ============== -->
-    <a-entity class="item door" gltf-model="#cua-model" position="0 0 0" tag-colliders open-door="openAngle: 90; speed: 800"></a-entity>
- 
-    <a-entity gltf-model="#teddy-model" position="1 0.6 -2" class="item" grabbable
-              animation__hoverin="property: scale; to: 1.1 1.1 1.1; startEvents: mouseenter; dur: 200"
-              animation__hoverout="property: scale; to: 1 1 1; startEvents: mouseleave; dur: 200">
+
+
+    <!-- LIGHTING -->
+    <a-light
+      type="ambient"
+      color="#1c261c"
+      intensity="0.45">
+    </a-light>
+
+    <a-entity
+      position="-3.5 2.6 -1"
+
+      light="
+        type: point;
+        color: #7cb860;
+        intensity: 8;
+        distance: 12;
+        decay: 2;
+        castShadow: true"
+
+      flicker="
+        min: 6.5;
+        max: 8.5;
+        speed: 0.3">
     </a-entity>
- 
-    <a-entity gltf-model="#hairpin-model" position="1.5 0.6 -2" class="item" grabbable
-              animation__hoverin="property: scale; to: 1.2 1.2 1.2; startEvents: mouseenter; dur: 200"
-              animation__hoverout="property: scale; to: 1 1 1; startEvents: mouseleave; dur: 200">
+
+    <a-entity
+      position="2.5 2.6 1.5"
+
+      light="
+        type: point;
+        color: #ffdb59;
+        intensity: 10;
+        distance: 15;
+        decay: 2;
+        castShadow: true"
+
+      flicker="
+        min: 8.5;
+        max: 10.5;
+        speed: 0.2">
     </a-entity>
- 
-    <!-- ============== PLAYER RIG ==============
-         Movement: movement-controls handles keyboard (desktop),
-         VR thumbstick, and touch — all in one component, replacing
-         the keyboard-only wasd-controls that never worked in a
-         headset.
- 
-         Collision: simple-collider only checks lightweight boxes
-         (.static-collider) and .item, never the full room meshes —
-         this is what stopped the freeze.
- 
-         Interaction split across hands to avoid both systems
-         fighting over the same trigger button:
-           - RIGHT hand: teleport-controls (point + trigger to
-             teleport across .floor planes)
-           - LEFT hand: raycaster + cursor, trigger fires
-             mousedown/mouseup on whatever it's pointing at — this
-             is what lets you grab the teddy/hairpin and open the
-             door with the left controller. -->
-    <a-entity id="rig" position="1 0 0.5">
-      <a-entity id="cam"
-                camera="near: 0.01; fov: 60"
-                position="0 1.1 0"
-                look-controls
-                movement-controls="speed: 0.15; controls: gamepad, keyboard, touch; fly: false"
-                simple-collider="objects: .item, .static-collider; radius: 0.4"
-                head-bob="amount: 0.035; speed: 14">
- 
-                <a-cursor color="#ffffff" scale="0.7 0.7 0.7"
-                          cursor="rayOrigin: mouse; fuse: false"
-                          raycaster="objects: .door, .item; far: 6">
-                </a-cursor>
+
+
+    <!-- SIX ROOM PARTS -->
+    <a-entity
+      id="wallandground"
+      class="roompart"
+      gltf-model="#wallandground-model"
+      position="0 0 0"
+      tag-floors
+      tag-colliders>
+    </a-entity>
+
+    <a-entity
+      id="living"
+      class="roompart"
+      gltf-model="#living-model"
+      position="0 0 0"
+      tag-floors
+      tag-colliders>
+    </a-entity>
+
+    <a-entity
+      id="kitchen"
+      class="roompart"
+      gltf-model="#kitchen-model"
+      position="0 0 0"
+      tag-floors
+      tag-colliders>
+    </a-entity>
+
+    <a-entity
+      id="bedroom"
+      class="roompart"
+      gltf-model="#bedroom-model"
+      position="0 0 0"
+      tag-floors
+      tag-colliders>
+    </a-entity>
+
+    <a-entity
+      id="toilet"
+      class="roompart"
+      gltf-model="#toilet-model"
+      position="0 0 0"
+      tag-floors
+      tag-colliders>
+    </a-entity>
+
+    <a-entity
+      id="bantho"
+      class="roompart"
+      gltf-model="#bantho-model"
+      position="0 0 0"
+      tag-floors
+      tag-colliders>
+    </a-entity>
+
+
+    <!-- POSITIONAL ROOM SOUNDS -->
+
+    <a-entity
+      id="bedroom-fan-sound"
+      class="room-sound"
+      position="-2 2.3 -3"
+
+      sound="
+        src: url(sounds/bedroom-fan.wav);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.45;
+        distanceModel: inverse;
+        refDistance: 1.5;
+        maxDistance: 8;
+        rolloffFactor: 1.2">
+    </a-entity>
+
+    <a-entity
+      id="bedroom-lamp-sound"
+      class="room-sound"
+      position="-2 1.5 -3"
+
+      sound="
+        src: url(sounds/lamp-buzz.wav);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.2;
+        distanceModel: inverse;
+        refDistance: 1;
+        maxDistance: 5;
+        rolloffFactor: 1.5">
+    </a-entity>
+
+    <a-entity
+      id="bedroom-rain-sound"
+      class="room-sound"
+      position="-3 1.7 -4"
+
+      sound="
+        src: url(sounds/bedroom-rain.wav);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.3;
+        distanceModel: inverse;
+        refDistance: 1.5;
+        maxDistance: 10;
+        rolloffFactor: 1">
+    </a-entity>
+
+    <a-entity
+      id="living-tv-sound"
+      class="room-sound"
+      position="2 1.1 0"
+
+      sound="
+        src: url(sounds/tv-static.mp3);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.35;
+        distanceModel: inverse;
+        refDistance: 1;
+        maxDistance: 8;
+        rolloffFactor: 1.4">
+    </a-entity>
+
+    <a-entity
+      id="living-light-sound"
+      class="room-sound"
+      position="2 2.5 0"
+
+      sound="
+        src: url(sounds/fluorescent-light.wav);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.25;
+        distanceModel: inverse;
+        refDistance: 1;
+        maxDistance: 7;
+        rolloffFactor: 1.3">
+    </a-entity>
+
+    <a-entity
+      id="living-rain-sound"
+      class="room-sound"
+      position="3 1.7 -1"
+
+      sound="
+        src: url(sounds/living-room-rain.mp3);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.3;
+        distanceModel: inverse;
+        refDistance: 1.5;
+        maxDistance: 10;
+        rolloffFactor: 1">
+    </a-entity>
+
+
+    <!-- INTERACTIVE OBJECTS -->
+    <a-entity
+      class="item door"
+      gltf-model="#cua-model"
+      position="0 0 0"
+      tag-colliders>
+    </a-entity>
+
+    <a-entity
+      gltf-model="#teddy-model"
+      position="1 0.6 -2"
+      class="item"
+      grabbable
+
+      animation__hoverin="
+        property: scale;
+        to: 1.1 1.1 1.1;
+        startEvents: mouseenter;
+        dur: 200"
+
+      animation__hoverout="
+        property: scale;
+        to: 1 1 1;
+        startEvents: mouseleave;
+        dur: 200">
+    </a-entity>
+
+    <a-entity
+      gltf-model="#hairpin-model"
+      position="1.5 0.6 -2"
+      class="item"
+      grabbable
+
+      animation__hoverin="
+        property: scale;
+        to: 1.2 1.2 1.2;
+        startEvents: mouseenter;
+        dur: 200"
+
+      animation__hoverout="
+        property: scale;
+        to: 1 1 1;
+        startEvents: mouseleave;
+        dur: 200">
+    </a-entity>
+
+
+    <!-- PLAYER / VR MOVEMENT -->
+    <a-entity
+      id="rig"
+      position="1 0 0.5">
+
+      <a-entity
+        id="cam"
+
+        camera="
+          near: 0.01;
+          fov: 60"
+
+        position="0 1.1 0"
+
+        look-controls
+
+        movement-controls="
+          speed: 0.15;
+          controls: gamepad, keyboard, touch;
+          fly: false"
+
+        simple-collider="
+          objects: .item, .static-collider;
+          radius: 0.4"
+
+        head-bob="
+          amount: 0.035;
+          speed: 14"
+
+        sound="
+          src: url(sounds/842186__aardsreel__footstep-floor.wav);
+          autoplay: false;
+          loop: true;
+          positional: false;
+          volume: 0.55"
+
+        footstep-player="
+          minSpeed: 0.02;
+          maxSpeed: 4">
+
+        <a-cursor
+          color="#ffffff"
+          scale="0.7 0.7 0.7"
+
+          cursor="
+            rayOrigin: mouse;
+            fuse: false"
+
+          raycaster="
+            objects: .door, .item;
+            far: 6">
+        </a-cursor>
       </a-entity>
- 
-      <a-entity hand-controls="hand: right"
-                teleport-controls="cameraRig: #rig; teleportOrigin: #cam; button: trigger; collisionEntities: .floor; startEvents: triggerdown; endEvents: triggerup">
+
+      <a-entity
+        id="leftHand"
+
+        hand-controls="
+          hand: left"
+
+        teleport-controls="
+          cameraRig: #rig;
+          teleportOrigin: #cam;
+          button: trigger;
+          collisionEntities: .floor;
+          startEvents: triggerdown;
+          endEvents: triggerup">
       </a-entity>
- 
-      <a-entity hand-controls="hand: left"
-                raycaster="objects: .door, .item; far: 6; showLine: true; lineColor: #9fe0ff; lineOpacity: 0.5"
-                cursor="fuse: false; downEvents: triggerdown; upEvents: triggerup">
+
+      <a-entity
+        id="rightHand"
+
+        hand-controls="
+          hand: right"
+
+        teleport-controls="
+          cameraRig: #rig;
+          teleportOrigin: #cam;
+          button: trigger;
+          collisionEntities: .floor;
+          startEvents: triggerdown;
+          endEvents: triggerup">
       </a-entity>
     </a-entity>
- 
+
   </a-scene>
- 
+
 </body>
 </html>
- 
