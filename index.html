@@ -20,6 +20,17 @@
 
   <script>
     /* ============================================================
+       DEBUG SWITCH
+       -------------------------------------------------------------
+       Set to true once, load the scene, open the browser / Quest
+       console, and you'll see every mesh name printed per room
+       part. Use that list to fix the "floorNames" array below if
+       teleport still doesn't find your real floor names. Set back
+       to false when you're done.
+    ============================================================ */
+    const DEBUG_LOG_MESH_NAMES = true;
+
+    /* ============================================================
        Component 1: flicker — ánh sáng nhấp nháy tự nhiên
     ============================================================ */
     AFRAME.registerComponent('flicker', {
@@ -35,34 +46,78 @@
     /* ============================================================
        Component 2: tag-floors
        -------------------------------------------------------------
-       QUAN TRỌNG: căn phòng giờ được chia thành 6 file .glb riêng
-       (bantho, bedroom, kitchen, living, toilet, wallandground) thay
-       vì 1 file dcm.glb duy nhất. Component này được gắn lên TẤT CẢ
-       6 entity phòng, mỗi entity sẽ tự tìm những tên sàn nằm bên
-       trong file glb của chính nó — nếu tên sàn không có trong file
-       đó thì đơn giản bỏ qua (không lỗi), nên gắn tràn lên cả 6 file
-       là an toàn, không tạo trùng lặp.
+       Mỗi entity phòng (.roompart) tự tìm các tên sàn nằm trong
+       file glb của chính nó.
+
+       FIX: trước đây nếu KHÔNG có tên nào trong floorNames khớp
+       (rất dễ xảy ra sau khi tách file, vì Blender/exporter có thể
+       đổi tên, thêm hậu tố .001, đổi hoa/thường, bỏ dấu...), thì
+       component này lặng lẽ tạo ra 0 sàn — và teleport-controls
+       (dùng collisionEntities: '.floor') sẽ không có gì để chạm
+       vào, khiến người chơi không thể teleport và cũng không thể
+       đi bộ (vì không có locomotion nào khác trước đây).
+
+       Giờ nếu không tìm thấy tên nào khớp, code sẽ tự động tạo một
+       sàn dự phòng (fallback) bao phủ toàn bộ bounding box của
+       phòng đó, để teleport luôn có chỗ để đứng, kể cả khi tên sàn
+       gốc không khớp.
     ============================================================ */
     AFRAME.registerComponent('tag-floors', {
       schema: { floorNames: { default: ['san nha phong khach','san nha phoing an','san nha TOILET','san giat do','SAN PHONG NGU'] } },
       init: function () {
         this.el.addEventListener('model-loaded', () => {
-          const root = this.el.getObject3D('mesh'); if (!root) return;
+          const root = this.el.getObject3D('mesh');
+          if (!root) return;
+
+          if (DEBUG_LOG_MESH_NAMES) {
+            console.log('--- Mesh names in', this.el.id, '---');
+            root.traverse((n) => { if (n.name) console.log('  ', n.name); });
+          }
+
           const floorContainer = document.createElement('a-entity');
           floorContainer.setAttribute('id', 'floor-colliders-' + this.el.id);
           this.el.sceneEl.appendChild(floorContainer);
+
+          let foundAny = false;
+
           this.data.floorNames.forEach((name) => {
-            const obj = root.getObjectByName(name); if (!obj) return;
+            const obj = root.getObjectByName(name);
+            if (!obj) return;
+            foundAny = true;
             const box = new THREE.Box3().setFromObject(obj);
             const size = new THREE.Vector3(); const center = new THREE.Vector3();
             box.getSize(size); box.getCenter(center);
             const plane = document.createElement('a-plane');
             plane.setAttribute('class', 'floor'); plane.setAttribute('rotation', '-90 0 0');
             plane.setAttribute('width', Math.max(size.x, 0.1)); plane.setAttribute('height', Math.max(size.z, 0.1));
-            plane.setAttribute('position', ${center.x} ${box.min.y + 0.02} ${center.z});
+            plane.setAttribute('position', `${center.x} ${box.min.y + 0.02} ${center.z}`);
             plane.setAttribute('visible', 'false'); plane.setAttribute('data-floor-name', name);
             floorContainer.appendChild(plane);
           });
+
+          // FALLBACK: no named floor matched inside this room part —
+          // build one generic floor plane from the whole part's
+          // bounding box so teleport/walking still has something
+          // to land on.
+          if (!foundAny) {
+            const box = new THREE.Box3().setFromObject(root);
+            if (!box.isEmpty()) {
+              const size = new THREE.Vector3(); const center = new THREE.Vector3();
+              box.getSize(size); box.getCenter(center);
+              const plane = document.createElement('a-plane');
+              plane.setAttribute('class', 'floor');
+              plane.setAttribute('rotation', '-90 0 0');
+              plane.setAttribute('width', Math.max(size.x, 0.1));
+              plane.setAttribute('height', Math.max(size.z, 0.1));
+              plane.setAttribute('position', `${center.x} ${box.min.y + 0.02} ${center.z}`);
+              plane.setAttribute('visible', 'false');
+              plane.setAttribute('data-floor-name', 'fallback-' + this.el.id);
+              floorContainer.appendChild(plane);
+              if (DEBUG_LOG_MESH_NAMES) {
+                console.log(this.el.id, ': no named floor matched — created fallback floor from bounding box.');
+              }
+            }
+          }
         });
       }
     });
@@ -70,12 +125,9 @@
     /* ============================================================
        Component 3: tag-colliders
        -------------------------------------------------------------
-       Thay đổi so với bản cũ: trước đây có 1 điều kiện đặc biệt
-       "this.el.id === 'room'" để coi TOÀN BỘ mesh phòng là va chạm
-       nếu không tìm thấy tên khớp objectKeys. Giờ phòng là 6 entity
-       riêng (bantho / bedroom / kitchen / living / toilet /
-       wallandground), nên điều kiện đó đổi thành kiểm tra class
-       "roompart" — mọi entity phòng đều có class này.
+       Điều kiện đặc biệt cũ "this.el.id === 'room'" đã được đổi
+       thành kiểm tra class "roompart", vì phòng giờ là 6 entity
+       riêng thay vì 1 entity #room duy nhất.
     ============================================================ */
     AFRAME.registerComponent('tag-colliders', {
       schema: { objectKeys: { default: ['table', 'chair', 'door'] } },
@@ -131,9 +183,9 @@
             const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
             const collider = document.createElement('a-entity');
             collider.setAttribute('class', 'static-collider');
-            collider.setAttribute('geometry', primitive: box; width: ${Math.max(size.x, 0.01)}; height: ${Math.max(size.y, 0.01)}; depth: ${Math.max(size.z, 0.01)});
-            collider.setAttribute('position', ${center.x} ${center.y} ${center.z});
-            collider.setAttribute('rotation', ${THREE.MathUtils.radToDeg(euler.x)} ${THREE.MathUtils.radToDeg(euler.y)} ${THREE.MathUtils.radToDeg(euler.z)});
+            collider.setAttribute('geometry', `primitive: box; width: ${Math.max(size.x, 0.01)}; height: ${Math.max(size.y, 0.01)}; depth: ${Math.max(size.z, 0.01)}`);
+            collider.setAttribute('position', `${center.x} ${center.y} ${center.z}`);
+            collider.setAttribute('rotation', `${THREE.MathUtils.radToDeg(euler.x)} ${THREE.MathUtils.radToDeg(euler.y)} ${THREE.MathUtils.radToDeg(euler.z)}`);
             collider.setAttribute('visible', 'false');
             colliderContainer.appendChild(collider);
           };
@@ -165,9 +217,8 @@
     /* ============================================================
        Component 4: simple-collider (Va chạm người chơi)
        -------------------------------------------------------------
-       Đổi selector mặc định từ '#room, .item, .static-collider'
-       sang '.roompart, .item, .static-collider' — vì phòng không
-       còn là 1 entity #room duy nhất mà là 6 mảnh .roompart.
+       Selector mặc định đổi từ '#room, .item, .static-collider'
+       sang '.roompart, .item, .static-collider'.
     ============================================================ */
     AFRAME.registerComponent('simple-collider', {
       schema: { objects: { default: '.roompart, .item, .static-collider' }, radius: { default: 0.4 } },
@@ -269,9 +320,8 @@
     /* ============================================================
        Component 6: grabbable (Nhặt lên và đặt xuống)
        -------------------------------------------------------------
-       Đổi selector khi raycast tìm bề mặt đặt vật xuống: từ
-       '#room, .item' sang '.roompart, .item' vì phòng giờ là 6
-       entity riêng biệt.
+       Selector khi raycast tìm bề mặt đặt vật xuống đổi từ
+       '#room, .item' sang '.roompart, .item'.
     ============================================================ */
     AFRAME.registerComponent('grabbable', {
       init: function () {
@@ -351,14 +401,7 @@
     <a-entity light="type: point; color: #7cb860; intensity: 8; distance: 12; decay: 2; castShadow: true" position="-3.5 2.6 -1" flicker="min: 6.5; max: 8.5; speed: 0.3"></a-entity>
     <a-entity light="type: point; color: #ffdb59; intensity: 10; distance: 15; decay: 2; castShadow: true" position="2.5 2.6 1.5" flicker="min: 8.5; max: 10.5; speed: 0.2"></a-entity>
 
-    <!-- ============== CĂN PHÒNG: 6 MẢNH GHÉP LẠI ==============
-         Mỗi mảnh là 1 entity riêng, cùng mang class "roompart" để
-         mọi component va chạm / tag-floors / tag-colliders coi
-         chúng là một khối phòng thống nhất. Nếu các mảnh vốn được
-         đặt đúng vị trí sẵn trong Blender trước khi export (world
-         origin trùng nhau) thì để position="0 0 0" là khớp lại
-         thành 1 căn nhà hoàn chỉnh. Nếu sau khi load bị lệch nhau,
-         chỉnh lại position của từng entity bên dưới. -->
+    <!-- ============== CĂN PHÒNG: 6 MẢNH GHÉP LẠI ============== -->
     <a-entity id="wallandground" class="roompart" gltf-model="#wallandground-model" position="0 0 0" tag-floors tag-colliders></a-entity>
     <a-entity id="living" class="roompart" gltf-model="#living-model" position="0 0 0" tag-floors tag-colliders></a-entity>
     <a-entity id="kitchen" class="roompart" gltf-model="#kitchen-model" position="0 0 0" tag-floors tag-colliders></a-entity>
@@ -379,13 +422,21 @@
               animation__hoverout="property: scale; to: 1 1 1; startEvents: mouseleave; dur: 200">
     </a-entity>
 
-    <!-- ============== NGƯỜI CHƠI / DI CHUYỂN VR ============== -->
+    <!-- ============== NGƯỜI CHƠI / DI CHUYỂN VR ==============
+         FIX: wasd-controls chỉ nhận sự kiện bàn phím vật lý, nên
+         KHÔNG hoạt động khi đang ở trong kính VR (không có bàn
+         phím). Đã thay bằng movement-controls (từ aframe-extras),
+         hỗ trợ: bàn phím (desktop), cần analog / thumbstick trên
+         tay cầm VR (Quest), và vuốt chạm (mobile) — cùng một
+         component. Nó được gắn lên #cam giống hệt vị trí cũ của
+         wasd-controls để simple-collider (theo dõi vị trí local
+         của #cam) vẫn hoạt động đúng như trước. -->
     <a-entity id="rig" position="1 0 0.5">
       <a-entity id="cam"
                 camera="near: 0.01; fov: 60"
                 position="0 1.1 0"
                 look-controls
-                wasd-controls="acceleration: 8"
+                movement-controls="speed: 0.15; controls: gamepad, keyboard, touch; fly: false"
                 simple-collider="objects: .roompart, .item, .door; radius: 0.4"
                 head-bob="amount: 0.035; speed: 14">
 
