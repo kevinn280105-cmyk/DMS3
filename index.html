@@ -144,7 +144,7 @@
         },
         {
           element: document.querySelector('#tvStaticAudio'),
-          volume: 0.18
+          volume: 0.08
         }
       ];
 
@@ -449,10 +449,6 @@
 
     /* ============================================================
        5. DOOR OPEN / CLOSE
-
-       Rotates the entity it is attached to around its own
-       local Y axis (i.e. around whatever pivot point the
-       entity's object3D origin sits at).
     ============================================================ */
     AFRAME.registerComponent('door-interact', {
       schema: {
@@ -495,122 +491,6 @@
               easing: 'easeOutQuad'
             }
           );
-        });
-      }
-    });
-
-
-    /* ============================================================
-       5b. SPLIT MULTI-DOOR MODELS INTO INDEPENDENT DOORS
-
-       cua.glb contains 3 door meshes baked at 3 different
-       world positions inside a single glTF scene. If a single
-       entity rotates the whole model, all 3 doors swing around
-       one shared pivot instead of their own hinge.
-
-       This component walks the top-level nodes of the loaded
-       model, and for each one:
-        - computes its own world-space bounding box
-        - places a pivot at one vertical edge of that box
-          (the hinge), on the longer horizontal side of the door
-        - re-parents the door mesh under that pivot, preserving
-          its world position/rotation
-        - creates a brand new interactable entity with its own
-          door-interact component, so each door opens
-          independently around its own hinge.
-
-       hingeSides lets you flip an individual door's hinge from
-       "min" to "max" if it opens from the wrong side after
-       testing in-scene (order matches node order inside the glb).
-    ============================================================ */
-    AFRAME.registerComponent('split-doors', {
-      schema: {
-        hingeSides: {
-          type: 'array',
-          default: ['min', 'min', 'min']
-        },
-        openAngle: { default: 90 }
-      },
-
-      init: function () {
-        this.el.addEventListener('model-loaded', () => {
-          const root = this.el.getObject3D('mesh');
-
-          if (!root) {
-            return;
-          }
-
-          root.updateMatrixWorld(true);
-
-          // Snapshot children first: we are about to remove
-          // them from root as we re-parent each one.
-          const doorNodes = root.children.slice();
-
-          doorNodes.forEach((doorNode, index) => {
-            doorNode.updateMatrixWorld(true);
-
-            const box =
-              new THREE.Box3().setFromObject(doorNode);
-
-            if (box.isEmpty()) {
-              return;
-            }
-
-            const size = new THREE.Vector3();
-            box.getSize(size);
-
-            // The wider horizontal dimension is treated as the
-            // door's swing width; the hinge sits on one end of it.
-            const hingeAxis =
-              size.x >= size.z ? 'x' : 'z';
-
-            const hingeSide =
-              this.data.hingeSides[index] || 'min';
-
-            const hingePoint = new THREE.Vector3(
-              hingeAxis === 'x'
-                ? (hingeSide === 'min' ? box.min.x : box.max.x)
-                : (box.min.x + box.max.x) / 2,
-
-              box.min.y,
-
-              hingeAxis === 'z'
-                ? (hingeSide === 'min' ? box.min.z : box.max.z)
-                : (box.min.z + box.max.z) / 2
-            );
-
-            const pivotEntity =
-              document.createElement('a-entity');
-
-            pivotEntity.setAttribute(
-              'class',
-              'door interactable'
-            );
-
-            pivotEntity.setAttribute(
-              'id',
-              `door-${index}`
-            );
-
-            pivotEntity.object3D.position.copy(hingePoint);
-
-            this.el.sceneEl.appendChild(pivotEntity);
-
-            // attach() preserves the door mesh's current world
-            // transform while moving it under the new pivot, so
-            // it keeps rendering in the exact same spot even
-            // though its parent (and therefore its local origin
-            // for rotation) has changed.
-            pivotEntity.object3D.attach(doorNode);
-
-            pivotEntity.setAttribute('door-interact', {
-              openAngle: this.data.openAngle
-            });
-          });
-
-          // The original container has no geometry left once
-          // every door node has been re-parented out.
-          this.el.setAttribute('visible', false);
         });
       }
     });
@@ -1068,31 +948,18 @@
 
 
     <!-- ======================================================
-         DOOR SOURCE MODEL (3 doors baked into 1 glb)
-
-         This entity is only used to load the raw geometry.
-         The split-doors component below breaks it apart into
-         3 independent, individually-clickable door entities
-         (door-0, door-1, door-2), each with its own hinge and
-         its own door-interact component, then hides this
-         container since its geometry has been moved out.
-
-         If a door swings from the wrong side after testing,
-         flip the matching entry in hingeSides (order follows
-         the node order inside cua.glb): 'min' or 'max'.
+         INTERACTIVE DOOR
     ======================================================= -->
     <a-entity
       id="door"
-      class="door-source"
+      class="door interactable"
 
       gltf-model="url(cua.glb)"
 
       position="0 0 0"
       rotation="0 0 0"
 
-      split-doors="
-        hingeSides: min, min, min;
-        openAngle: 90"
+      door-interact
 
       model-status="name: Door">
     </a-entity>
@@ -1100,13 +967,6 @@
 
     <!-- ======================================================
          INTERACTIVE TEDDY
-
-         Position is left at 0 0 0: the real room position is
-         already baked into teddy.glb's own node transform
-         (it was exported from the full house scene), the same
-         way the room parts above are. Adding another offset on
-         top of that double-moved the teddy away from where it
-         visually needs to be.
     ======================================================= -->
     <a-entity
       id="teddy"
@@ -1114,7 +974,7 @@
 
       gltf-model="url(teddy.glb)"
 
-      position="0 0 0"
+      position="1 0.6 -2"
 
       grabbable
 
@@ -1136,10 +996,6 @@
 
     <!-- ======================================================
          INTERACTIVE HAIRPIN
-
-         Same fix as the teddy above: hairpin.glb already bakes
-         in its real room position, so the entity itself stays
-         at 0 0 0.
     ======================================================= -->
     <a-entity
       id="hairpin"
@@ -1147,7 +1003,7 @@
 
       gltf-model="url(hairpin.glb)"
 
-      position="0 0 0"
+      position="1.5 0.6 -2"
 
       grabbable
 
