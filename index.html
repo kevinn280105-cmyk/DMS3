@@ -453,11 +453,19 @@
     AFRAME.registerComponent('door-hinge', {
       schema: {
         openAngle: { default: 45 },
+
         hingeSide: {
           default: 'left',
           oneOf: ['left', 'right']
         },
-        speed: { default: 7 }
+
+        speed: { default: 7 },
+
+        /*
+          Use -1 instead of 1 when the door must swing in the
+          opposite direction.
+        */
+        direction: { default: 1 }
       },
 
       init: function () {
@@ -472,7 +480,7 @@
 
         this.el.addEventListener(
           'model-loaded',
-          () => this.createHinge()
+          () => this.createRealHinge()
         );
 
         this.el.addEventListener(
@@ -499,9 +507,9 @@
         model.updateMatrixWorld(true);
 
         const inverseEntityWorld =
-          new THREE.Matrix4().copy(
-            this.el.object3D.matrixWorld
-          ).invert();
+          new THREE.Matrix4()
+            .copy(this.el.object3D.matrixWorld)
+            .invert();
 
         model.traverse((node) => {
           if (!node.isMesh || !node.geometry) {
@@ -533,13 +541,16 @@
         return localBox;
       },
 
-      createHinge: function () {
+      createRealHinge: function () {
         const model =
           this.el.getObject3D('mesh');
 
         if (!model || this.pivot) {
           return;
         }
+
+        this.el.object3D.updateMatrixWorld(true);
+        model.updateMatrixWorld(true);
 
         const box =
           this.getLocalBoundingBox(model);
@@ -555,52 +566,87 @@
         box.getCenter(center);
 
         /*
-          A real door rotates around one vertical edge. The pivot is
-          placed at one end of the door's longest horizontal axis.
-          That hinge edge remains stationary while the opposite side
-          swings through a 45-degree arc.
+          The door's width is whichever horizontal dimension is
+          longer. Its thickness is the shorter horizontal dimension.
         */
         const widthRunsAlongX =
           size.x >= size.z;
 
-        const hingeLocal =
+        /*
+          Put the hinge on one complete vertical edge of the door.
+          That edge remains fixed while the opposite edge swings.
+        */
+        const hingePosition =
           center.clone();
 
         if (widthRunsAlongX) {
-          hingeLocal.x =
+          hingePosition.x =
             this.data.hingeSide === 'left'
               ? box.min.x
               : box.max.x;
         } else {
-          hingeLocal.z =
+          hingePosition.z =
             this.data.hingeSide === 'left'
               ? box.min.z
               : box.max.z;
         }
 
-        const pivot = new THREE.Group();
-        pivot.name = 'real-door-hinge';
-        pivot.position.copy(hingeLocal);
+        const pivot =
+          new THREE.Group();
 
-        this.el.object3D.add(pivot);
-        this.el.object3D.updateMatrixWorld(true);
-        pivot.updateMatrixWorld(true);
-        model.updateMatrixWorld(true);
+        pivot.name =
+          'real-door-edge-hinge';
+
+        pivot.position.copy(
+          hingePosition
+        );
 
         /*
-          Preserve the door's exact world position when it becomes a
-          child of the hinge. Only the hinge rotates afterward.
+          Save the door model's current local transformation before
+          moving it underneath the hinge pivot.
         */
-        pivot.attach(model);
+        model.updateMatrix();
+
+        const oldLocalMatrix =
+          model.matrix.clone();
+
+        this.el.object3D.add(pivot);
+        this.el.object3D.remove(model);
+        pivot.add(model);
+
+        /*
+          Convert the old entity-local transform into hinge-local
+          space. This keeps the closed door exactly where it was,
+          but makes the hinge edge the new rotation origin.
+        */
+        const inversePivotMatrix =
+          new THREE.Matrix4().makeTranslation(
+            -hingePosition.x,
+            -hingePosition.y,
+            -hingePosition.z
+          );
+
+        const modelInsidePivot =
+          new THREE.Matrix4().multiplyMatrices(
+            inversePivotMatrix,
+            oldLocalMatrix
+          );
+
+        modelInsidePivot.decompose(
+          model.position,
+          model.quaternion,
+          model.scale
+        );
+
+        model.updateMatrix();
+        model.updateMatrixWorld(true);
 
         this.pivot = pivot;
 
         console.log(
-          'Door hinge ready:',
+          'Real door hinge created:',
           this.data.hingeSide,
-          'side,',
-          this.data.openAngle,
-          'degrees.'
+          'edge stays fixed.'
         );
       },
 
@@ -613,25 +659,36 @@
           return;
         }
 
-        const now = performance.now();
+        const now =
+          performance.now();
 
-        if (now - this.lastActivation < 250) {
+        if (
+          now - this.lastActivation <
+          250
+        ) {
           return;
         }
 
         this.lastActivation = now;
         this.isOpen = !this.isOpen;
 
+        const degrees =
+          this.isOpen
+            ? this.data.openAngle *
+              this.data.direction
+            : 0;
+
         this.targetAngle =
           THREE.MathUtils.degToRad(
-            this.isOpen
-              ? this.data.openAngle
-              : 0
+            degrees
           );
       },
 
       tick: function (time, deltaTime) {
-        if (!this.pivot || !deltaTime) {
+        if (
+          !this.pivot ||
+          !deltaTime
+        ) {
           return;
         }
 
@@ -649,6 +706,9 @@
             amount
           );
 
+        /*
+          Rotate the hinge pivot, not the center of the door.
+        */
         this.pivot.rotation.y =
           this.currentAngle;
       }
@@ -1435,6 +1495,7 @@
       door-hinge="
         openAngle: 45;
         hingeSide: left;
+        direction: 1;
         speed: 7"
 
       easy-target="
