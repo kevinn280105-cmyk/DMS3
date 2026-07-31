@@ -113,10 +113,6 @@
   <script>
     /* ============================================================
        RELIABLE SOUND BUTTON
-
-       The button updates immediately, before any audio loading.
-       All play() calls begin during the same real button click,
-       which is important because browsers block automatic sound.
     ============================================================ */
     async function enableSound() {
       const button =
@@ -250,8 +246,6 @@
 
     /* ============================================================
        2. MODEL LOAD STATUS
-
-       Open the browser Console to see which GLB loaded or failed.
     ============================================================ */
     AFRAME.registerComponent('model-status', {
       schema: {
@@ -277,9 +271,6 @@
 
     /* ============================================================
        3. CREATE TELEPORT FLOORS FROM NAMED BLENDER OBJECTS
-
-       A permanent fallback floor is also included in the HTML,
-       so teleport still works when the Blender names do not match.
     ============================================================ */
     AFRAME.registerComponent('tag-floors', {
       schema: {
@@ -374,9 +365,6 @@
 
     /* ============================================================
        4. DESKTOP HEAD BOB
-
-       Disabled in immersive VR to avoid conflicting with real
-       headset tracking.
     ============================================================ */
     AFRAME.registerComponent('head-bob', {
       schema: {
@@ -449,6 +437,20 @@
 
     /* ============================================================
        5. DOOR OPEN / CLOSE
+
+       FIX: previously used a continuous per-frame lerp that chases
+       the target angle forever (this.currentAngle toward
+       this.targetAngle every tick). That asymptotically slows down
+       near the end and is sensitive to frame-rate stutters, which
+       reads as a mushy, inconsistent swing instead of a real door
+       motion.
+
+       Now it uses a fixed-duration eased swing: every activation
+       records a start angle, a target angle, and a start time, then
+       tick() computes progress as elapsed-time / duration (not
+       frame-count dependent) and applies an ease-in-out curve. The
+       door always finishes its swing in exactly `duration` ms,
+       every time, regardless of frame rate.
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
@@ -457,13 +459,15 @@
           default: 'left',
           oneOf: ['left', 'right']
         },
-        speed: { default: 7 }
+        duration: { default: 600 }
       },
 
       init: function () {
         this.isOpen = false;
+        this.startAngle = 0;
         this.currentAngle = 0;
         this.targetAngle = 0;
+        this.animStartTime = 0;
         this.pivot = null;
         this.lastActivation = 0;
 
@@ -510,10 +514,6 @@
         box.getSize(size);
         box.getCenter(center);
 
-        /*
-          Find the longer horizontal direction of the door and put
-          the pivot at one end of that direction.
-        */
         const useXAxis =
           size.x >= size.z;
 
@@ -545,10 +545,6 @@
 
         this.el.object3D.add(pivot);
 
-        /*
-          attach() preserves the model's world position while moving
-          it under the new hinge group.
-        */
         pivot.attach(model);
 
         this.pivot = pivot;
@@ -560,19 +556,24 @@
         );
       },
 
+      easeInOutQuad: function (t) {
+        return t < 0.5
+          ? 2 * t * t
+          : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      },
+
       activate: function () {
         const now = performance.now();
 
-        /*
-          Desktop cursor and VR controls can occasionally produce
-          two events very close together. Ignore the duplicate.
-        */
         if (now - this.lastActivation < 250) {
           return;
         }
 
         this.lastActivation = now;
         this.isOpen = !this.isOpen;
+
+        this.startAngle = this.currentAngle;
+        this.animStartTime = now;
 
         this.targetAngle =
           THREE.MathUtils.degToRad(
@@ -582,23 +583,20 @@
           );
       },
 
-      tick: function (time, deltaTime) {
-        if (!this.pivot || !deltaTime) {
+      tick: function () {
+        if (!this.pivot) {
           return;
         }
 
-        const amount =
-          Math.min(
-            1,
-            (deltaTime / 1000) *
-            this.data.speed
-          );
+        const elapsed = performance.now() - this.animStartTime;
+        const t = Math.min(1, elapsed / this.data.duration);
+        const eased = this.easeInOutQuad(t);
 
         this.currentAngle =
           THREE.MathUtils.lerp(
-            this.currentAngle,
+            this.startAngle,
             this.targetAngle,
-            amount
+            eased
           );
 
         this.pivot.rotation.y =
@@ -609,9 +607,6 @@
 
     /* ============================================================
        INVISIBLE INTERACTION HITBOX
-
-       Creates one lightweight transparent box around an object.
-       This makes the teddy, hairpin and door easier to point at.
     ============================================================ */
     AFRAME.registerComponent('easy-target', {
       schema: {
@@ -693,10 +688,6 @@
           Math.max(size.z + padding, 0.12)
         );
 
-        /*
-          The box must remain technically visible for raycasting,
-          but an opacity of 0.001 makes it effectively invisible.
-        */
         hitbox.setAttribute(
           'material',
           'color: #ffffff; opacity: 0.001; transparent: true; depthWrite: false'
@@ -709,14 +700,6 @@
 
     /* ============================================================
        6. GRAB AND DROP TEDDY / HAIRPIN
-
-       Desktop:
-       Click an object to pick it up.
-       Click it again to drop it.
-
-       VR:
-       Right trigger picks it up.
-       Right grip button drops the held object.
     ============================================================ */
     AFRAME.registerComponent('grabbable', {
       init: function () {
@@ -788,9 +771,6 @@
           this.el.object3D
         );
 
-        /*
-          Place the item visibly in front of the controller/camera.
-        */
         if (scene.is('vr-mode')) {
           this.el.object3D.position.set(
             0,
@@ -826,10 +806,6 @@
           worldPosition
         );
 
-        /*
-          Reattach to the scene while preserving world position,
-          rotation and scale.
-        */
         scene.object3D.attach(
           this.el.object3D
         );
@@ -858,11 +834,6 @@
             });
           });
 
-        /*
-          Dropping performs only one downward raycast. This is not
-          an every-frame collision calculation, so it remains light
-          enough for Quest.
-        */
         if (roomMeshes.length) {
           this.dropRay.set(
             new THREE.Vector3(
@@ -892,10 +863,6 @@
                 this.el.object3D
               );
 
-            /*
-              Move the object just enough for the bottom of its
-              bounding box to rest on the surface.
-            */
             const lift =
               hit.point.y -
               objectBox.min.y +
@@ -916,14 +883,6 @@
 
     /* ============================================================
        RELIABLE RIGHT-CONTROLLER INTERACTION
-
-       Trigger:
-       - Pick up the object being pointed at.
-       - Open/close the door.
-       - Drop the currently held object.
-
-       Grip:
-       - Drop the currently held object.
     ============================================================ */
     AFRAME.registerComponent('vr-interactor', {
       init: function () {
@@ -985,20 +944,7 @@
 
 
     /* ============================================================
-       8. AUDIO UNLOCK
-
-       No visible start screen is used.
-       Audio starts after the first click, key press, controller
-       trigger or after entering VR.
-    ============================================================ */
-    /* Native audio button replaces the old audio-unlock component. */
-
-
-    /* ============================================================
        9. FOOTSTEPS
-
-       Attached to the player rig so thumbstick and keyboard
-       movement can trigger the footsteps.
     ============================================================ */
     AFRAME.registerComponent('footstep-player', {
       schema: {
@@ -1119,8 +1065,6 @@
 
     <!-- ======================================================
          LIGHTS
-
-         Shadows are disabled for better Quest performance.
     ======================================================= -->
     <a-light
       type="ambient"
@@ -1167,8 +1111,6 @@
 
     <!-- ======================================================
          SPLIT ROOM MODELS
-
-         Each model loads independently.
     ======================================================= -->
     <a-entity
       id="wallandground"
@@ -1232,8 +1174,6 @@
 
     <!-- ======================================================
          FALLBACK TELEPORT FLOOR
-
-         Change Y=0.01 if your real floor is at another height.
     ======================================================= -->
     <a-plane
       id="fallback-teleport-floor"
@@ -1252,12 +1192,6 @@
     </a-plane>
 
 
-    <!--
-         Room ambience is played by the native audio elements
-         near the top of the page.
-    -->
-
-
     <!-- ======================================================
          INTERACTIVE DOOR
     ======================================================= -->
@@ -1273,7 +1207,7 @@
       door-hinge="
         openAngle: 85;
         hingeSide: left;
-        speed: 7"
+        duration: 600"
 
       easy-target="
         padding: 0.06"
@@ -1348,13 +1282,6 @@
 
     <!-- ======================================================
          PLAYER RIG
-
-         Stability change:
-         movement-controls is on the rig, not the camera.
-
-         Collision calculations are temporarily disabled because
-         they were the likely cause of Quest freezing. This means
-         the player can currently move through walls.
     ======================================================= -->
     <a-entity
       id="rig"
@@ -1424,20 +1351,27 @@
       </a-entity>
 
 
-      <!-- Right controller: interact -->
+      <!-- Right controller: interact
+           FIX: laser-controls removed. It was setting up its own
+           internal raycaster/cursor system, which fights with (and
+           can overwrite) the explicit raycaster config below that
+           vr-interactor depends on. That conflict is very likely
+           why the teddy/hairpin wouldn't grab. hand-controls still
+           gives us the physical controller model + trigger/grip
+           events; raycaster + vr-interactor handle all pointing and
+           interaction now, with nothing else touching the same
+           raycaster component. -->
       <a-entity
         id="rightHand"
 
         hand-controls="
           hand: right"
 
-        laser-controls="
-          hand: right"
-
         raycaster="
           objects: .interactable;
           far: 6;
           interval: 50;
+          showLine: true;
           lineColor: #ffffff;
           lineOpacity: 0.8"
 
