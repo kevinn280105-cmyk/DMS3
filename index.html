@@ -438,28 +438,45 @@
     /* ============================================================
        5. DOOR OPEN / CLOSE
 
-       FIX: previously used a continuous per-frame lerp that chases
-       the target angle forever (this.currentAngle toward
-       this.targetAngle every tick). That asymptotically slows down
-       near the end and is sensitive to frame-rate stutters, which
-       reads as a mushy, inconsistent swing instead of a real door
-       motion.
+       FIX #1: previously used a continuous per-frame lerp that
+       chases the target angle forever. That asymptotically slows
+       down near the end and is sensitive to frame-rate stutters.
+       Now uses a fixed-duration eased swing (elapsed / duration,
+       not frame-count dependent) so it always finishes in exactly
+       `duration` ms.
 
-       Now it uses a fixed-duration eased swing: every activation
-       records a start angle, a target angle, and a start time, then
-       tick() computes progress as elapsed-time / duration (not
-       frame-count dependent) and applies an ease-in-out curve. The
-       door always finishes its swing in exactly `duration` ms,
-       every time, regardless of frame rate.
+       FIX #2 (looks like the whole door rotates instead of one
+       edge staying fixed): the hinge point was auto-guessed from
+       the door's bounding box (assuming the wider horizontal
+       dimension is the door's width). If your door mesh's own
+       local axes don't line up with that guess, the pivot lands
+       in the wrong place and it can look like the door spins
+       around its center instead of swinging on an edge.
+
+       Two ways to fix this now:
+       1. Set axis="x" or axis="z" explicitly (instead of "auto")
+          if you know which world axis the door's width runs
+          along, and hingeSide to pick which end is the hinge.
+       2. Set debug="true" — this drops a small red sphere at the
+          exact point the code thinks the hinge is. Load the scene,
+          look at where that sphere sits relative to the door: if
+          it's not sitting right on the visible hinge edge of your
+          door model, that confirms the auto-guess is wrong and
+          tells you which way to correct axis/hingeSide.
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
-        openAngle: { default: 85 },
+        openAngle: { default: 45 },
         hingeSide: {
           default: 'left',
           oneOf: ['left', 'right']
         },
-        duration: { default: 600 }
+        axis: {
+          default: 'auto',
+          oneOf: ['auto', 'x', 'z']
+        },
+        duration: { default: 600 },
+        debug: { default: false }
       },
 
       init: function () {
@@ -515,7 +532,9 @@
         box.getCenter(center);
 
         const useXAxis =
-          size.x >= size.z;
+          this.data.axis === 'auto'
+            ? size.x >= size.z
+            : this.data.axis === 'x';
 
         const hingeWorld =
           center.clone();
@@ -549,10 +568,19 @@
 
         this.pivot = pivot;
 
+        if (this.data.debug) {
+          const marker = document.createElement('a-sphere');
+          marker.setAttribute('radius', '0.04');
+          marker.setAttribute('color', '#ff2222');
+          marker.setAttribute('position', `${hingeWorld.x} ${hingeWorld.y} ${hingeWorld.z}`);
+          this.el.sceneEl.appendChild(marker);
+          console.log('Door hinge marker placed at world position:', hingeWorld);
+        }
+
         console.log(
           'Door hinge created on',
           this.data.hingeSide,
-          'side.'
+          'side, axis:', useXAxis ? 'x' : 'z'
         );
       },
 
@@ -883,9 +911,27 @@
 
     /* ============================================================
        RELIABLE RIGHT-CONTROLLER INTERACTION
+
+       FIX: this used to read this.el.components.raycaster.intersectedEls
+       — the raycaster component's own cached hit list, which only
+       refreshes every `interval` ms (50ms) on its own timer. If a
+       trigger press landed in between refreshes, or right after the
+       hand moved, that list could be empty or stale even while
+       visibly pointing at the teddy — causing grabs to silently
+       fail with no error.
+
+       Now useTrigger() does its own fresh raycast at the exact
+       moment the trigger fires, straight from the controller's
+       current world position/direction against the actual meshes
+       of every ".interactable" entity (including their invisible
+       easy-target hitboxes). No dependency on any other
+       component's internal timing.
     ============================================================ */
     AFRAME.registerComponent('vr-interactor', {
       init: function () {
+        this.raycaster = new THREE.Raycaster();
+        this.raycaster.far = 6;
+
         this.el.addEventListener(
           'triggerdown',
           () => this.useTrigger()
@@ -906,22 +952,51 @@
           return;
         }
 
-        const raycaster =
-          this.el.components.raycaster;
+        const origin = new THREE.Vector3();
+        const direction = new THREE.Vector3();
 
-        if (!raycaster) {
+        this.el.object3D.getWorldPosition(origin);
+        this.el.object3D.getWorldDirection(direction);
+
+        const meshes = [];
+
+        scene.querySelectorAll('.interactable').forEach((entity) => {
+          const tagMesh = (root) => {
+            if (!root) return;
+            root.updateMatrixWorld(true);
+            root.traverse((node) => {
+              if (node.isMesh) {
+                node.userData.__interactableEl = entity;
+                meshes.push(node);
+              }
+            });
+          };
+
+          tagMesh(entity.getObject3D('mesh'));
+
+          const hitboxEl = entity.querySelector('.interaction-hitbox');
+          if (hitboxEl && hitboxEl.object3D) {
+            tagMesh(hitboxEl.object3D);
+          }
+        });
+
+        if (!meshes.length) {
           return;
         }
 
-        const targets =
-          raycaster.intersectedEls || [];
+        this.raycaster.set(origin, direction);
+        const hit = this.raycaster.intersectObjects(meshes, true)[0];
 
-        const target =
-          targets.find((element) =>
-            element.classList.contains(
-              'interactable'
-            )
-          );
+        if (!hit) {
+          return;
+        }
+
+        let node = hit.object;
+        while (node && !node.userData.__interactableEl) {
+          node = node.parent;
+        }
+
+        const target = node ? node.userData.__interactableEl : null;
 
         if (target) {
           target.emit(
@@ -1207,7 +1282,9 @@
       door-hinge="
         openAngle: 45;
         hingeSide: left;
-        duration: 600"
+        axis: auto;
+        duration: 600;
+        debug: true"
 
       easy-target="
         padding: 0.06"
