@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Every GLB Has Player Collision</title>
+  <title>VR Room - Easy Door Closing + All GLB Collision</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -910,6 +910,7 @@
         this.parts = [];
         this.partStates = new Map();
         this.lastActivation = 0;
+        this.lastActiveState = null;
 
         this.el.addEventListener(
           'model-loaded',
@@ -1179,6 +1180,7 @@
         }
 
         this.lastActivation = now;
+        this.lastActiveState = state;
 
         /*
           Toggle the requested final state.
@@ -1203,6 +1205,41 @@
 
         state.animationTime = 0;
         state.isAnimating = true;
+      },
+
+      closeLastOpenDoor: function () {
+        const state =
+          this.lastActiveState;
+
+        if (!state || !state.isOpen) {
+          return false;
+        }
+
+        const now =
+          performance.now();
+
+        if (
+          now - this.lastActivation <
+          350
+        ) {
+          return false;
+        }
+
+        this.lastActivation = now;
+
+        /*
+          Close the most recently opened door even when the controller
+          ray no longer touches it because the door has swung away.
+        */
+        state.isOpen = false;
+        state.startAngle =
+          state.currentAngle;
+
+        state.targetAngle = 0;
+        state.animationTime = 0;
+        state.isAnimating = true;
+
+        return true;
       },
 
       easeInOut: function (value) {
@@ -2020,6 +2057,18 @@
             : null;
 
         if (!intersection) {
+          /*
+            When the opened door has moved out of the laser line,
+            pressing the same right trigger closes the last opened
+            door instead of doing nothing.
+          */
+          const doorComponent =
+            door.components['door-hinge'];
+
+          if (doorComponent) {
+            doorComponent.closeLastOpenDoor();
+          }
+
           return;
         }
 
