@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - No Green Debug Text + Single Door Selection</title>
+  <title>VR Room - Door Opens and Closes in Reverse</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -453,7 +453,8 @@
         },
 
         speed: { default: 7 },
-        direction: { default: 1 }
+        direction: { default: 1 },
+        duration: { default: 650 }
       },
 
       init: function () {
@@ -689,7 +690,10 @@
           pivot,
           isOpen: false,
           currentAngle: 0,
-          targetAngle: 0
+          startAngle: 0,
+          targetAngle: 0,
+          animationTime: 0,
+          isAnimating: false
         };
 
         part.userData.doorPartState = state;
@@ -727,9 +731,18 @@
         }
 
         this.lastActivation = now;
-        state.isOpen = !state.isOpen;
 
-        const degrees =
+        /*
+          Toggle the requested final state.
+          Open goes from the current angle to 45 degrees.
+          Close goes from the current angle back to 0 degrees.
+          Clicking while it is moving reverses it smoothly from
+          wherever it currently is.
+        */
+        state.isOpen = !state.isOpen;
+        state.startAngle = state.currentAngle;
+
+        const targetDegrees =
           state.isOpen
             ? this.data.openAngle *
               this.data.direction
@@ -737,8 +750,21 @@
 
         state.targetAngle =
           THREE.MathUtils.degToRad(
-            degrees
+            targetDegrees
           );
+
+        state.animationTime = 0;
+        state.isAnimating = true;
+      },
+
+      easeInOut: function (value) {
+        /*
+          Smooth acceleration and deceleration.
+          Closing uses the exact same curve as opening, reversed.
+        */
+        return value < 0.5
+          ? 2 * value * value
+          : 1 - Math.pow(-2 * value + 2, 2) / 2;
       },
 
       tick: function (time, deltaTime) {
@@ -746,23 +772,42 @@
           return;
         }
 
-        const amount =
-          Math.min(
-            1,
-            (deltaTime / 1000) *
-            this.data.speed
-          );
-
         this.partStates.forEach((state) => {
+          if (!state.isAnimating) {
+            return;
+          }
+
+          state.animationTime += deltaTime;
+
+          const progress =
+            Math.min(
+              state.animationTime /
+              this.data.duration,
+              1
+            );
+
+          const eased =
+            this.easeInOut(progress);
+
           state.currentAngle =
             THREE.MathUtils.lerp(
-              state.currentAngle,
+              state.startAngle,
               state.targetAngle,
-              amount
+              eased
             );
 
           state.pivot.rotation.y =
             state.currentAngle;
+
+          if (progress >= 1) {
+            state.currentAngle =
+              state.targetAngle;
+
+            state.pivot.rotation.y =
+              state.targetAngle;
+
+            state.isAnimating = false;
+          }
         });
       }
     });
