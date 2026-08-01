@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - 45 Degree Door + Reliable Teddy Pickup</title>
+  <title>VR Room - Natural Grab + Reachable Radius</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -56,6 +56,21 @@
       opacity: 0.7;
       cursor: default;
     }
+
+    #debugHud {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 1000;
+      max-width: 320px;
+      padding: 10px 14px;
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 8px;
+      color: #9fffb0;
+      background: rgba(0,0,0,0.82);
+      font: 13px monospace;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 
@@ -64,6 +79,15 @@
   <button id="soundButton" type="button" onclick="enableSound()">
     ENABLE SOUND
   </button>
+
+  <!--
+    DEBUG HUD: desktop-only overlay. The in-headset version is the
+    a-text entity attached to the camera further down (id=debugHudVR)
+    — this div does NOT show up inside an active VR session, WebXR
+    fullscreen only renders the 3D canvas. Remove both once grabbing
+    is confirmed working well.
+  -->
+  <div id="debugHud">Debug HUD ready.</div>
 
   <!--
     Native browser audio is used here because it is more reliable
@@ -210,6 +234,27 @@
     window.enableSound = enableSound;
 
     /* ============================================================
+       SHARED DEBUG HUD WRITER
+
+       Updates both the desktop overlay div and the in-headset text
+       panel attached to the camera, so the same message is readable
+       on a computer or inside the Quest.
+    ============================================================ */
+    function updateDebugHud(message) {
+      const div = document.querySelector('#debugHud');
+      if (div) {
+        div.textContent = message;
+      }
+
+      const vrPanel = document.querySelector('#debugHudVR');
+      if (vrPanel) {
+        vrPanel.setAttribute('text', 'value', message);
+      }
+    }
+
+    window.updateDebugHud = updateDebugHud;
+
+    /* ============================================================
        1. FLICKERING LIGHTS
     ============================================================ */
     AFRAME.registerComponent('flicker', {
@@ -250,8 +295,6 @@
 
     /* ============================================================
        2. MODEL LOAD STATUS
-
-       Open the browser Console to see which GLB loaded or failed.
     ============================================================ */
     AFRAME.registerComponent('model-status', {
       schema: {
@@ -277,9 +320,6 @@
 
     /* ============================================================
        3. CREATE TELEPORT FLOORS FROM NAMED BLENDER OBJECTS
-
-       A permanent fallback floor is also included in the HTML,
-       so teleport still works when the Blender names do not match.
     ============================================================ */
     AFRAME.registerComponent('tag-floors', {
       schema: {
@@ -374,9 +414,6 @@
 
     /* ============================================================
        4. DESKTOP HEAD BOB
-
-       Disabled in immersive VR to avoid conflicting with real
-       headset tracking.
     ============================================================ */
     AFRAME.registerComponent('head-bob', {
       schema: {
@@ -461,10 +498,6 @@
 
         speed: { default: 7 },
 
-        /*
-          Use -1 instead of 1 when the door must swing in the
-          opposite direction.
-        */
         direction: { default: 1 }
       },
 
@@ -483,18 +516,11 @@
           () => this.createRealHinge()
         );
 
-        /*
-          VR uses only one custom activation event. This prevents
-          one trigger press from also producing a second click.
-        */
         this.el.addEventListener(
           'activate-object',
           this.activate
         );
 
-        /*
-          Desktop still uses a normal mouse click.
-        */
         this.el.addEventListener(
           'click',
           (event) => {
@@ -577,17 +603,9 @@
         box.getSize(size);
         box.getCenter(center);
 
-        /*
-          The door's width is whichever horizontal dimension is
-          longer. Its thickness is the shorter horizontal dimension.
-        */
         const widthRunsAlongX =
           size.x >= size.z;
 
-        /*
-          Put the hinge on one complete vertical edge of the door.
-          That edge remains fixed while the opposite edge swings.
-        */
         const hingePosition =
           center.clone();
 
@@ -613,10 +631,6 @@
           hingePosition
         );
 
-        /*
-          Save the door model's current local transformation before
-          moving it underneath the hinge pivot.
-        */
         model.updateMatrix();
 
         const oldLocalMatrix =
@@ -626,11 +640,6 @@
         this.el.object3D.remove(model);
         pivot.add(model);
 
-        /*
-          Convert the old entity-local transform into hinge-local
-          space. This keeps the closed door exactly where it was,
-          but makes the hinge edge the new rotation origin.
-        */
         const inversePivotMatrix =
           new THREE.Matrix4().makeTranslation(
             -hingePosition.x,
@@ -716,9 +725,6 @@
             amount
           );
 
-        /*
-          Rotate the hinge pivot, not the center of the door.
-        */
         this.pivot.rotation.y =
           this.currentAngle;
       }
@@ -726,168 +732,10 @@
 
 
     /* ============================================================
-       INTERACTION PROXY
+       6. NATURAL GRABBABLE (proximity-based, VR game style)
 
-       The invisible hitbox forwards interaction to its parent item.
-    ============================================================ */
-    AFRAME.registerComponent('interaction-proxy', {
-      schema: {
-        owner: { type: 'selector' }
-      },
-
-      init: function () {
-        const forward = (event) => {
-          if (event && event.stopPropagation) {
-            event.stopPropagation();
-          }
-
-          if (this.data.owner) {
-            this.data.owner.emit(
-              'activate-object',
-              {},
-              false
-            );
-          }
-        };
-
-        this.el.addEventListener(
-          'click',
-          forward
-        );
-
-        this.el.addEventListener(
-          'vr-activate',
-          forward
-        );
-      }
-    });
-
-
-    /* ============================================================
-       INVISIBLE INTERACTION HITBOX
-
-       The hitbox itself is included in the controller raycaster.
-    ============================================================ */
-    AFRAME.registerComponent('easy-target', {
-      schema: {
-        padding: { default: 0.08 },
-        minimumSize: { default: 0.25 }
-      },
-
-      init: function () {
-        this.el.addEventListener(
-          'model-loaded',
-          () => this.createHitbox()
-        );
-      },
-
-      createHitbox: function () {
-        if (
-          this.el.querySelector(
-            '.interaction-hitbox'
-          )
-        ) {
-          return;
-        }
-
-        const model =
-          this.el.getObject3D('mesh');
-
-        if (!model) {
-          return;
-        }
-
-        this.el.object3D.updateMatrixWorld(true);
-        model.updateMatrixWorld(true);
-
-        const box =
-          new THREE.Box3().setFromObject(model);
-
-        if (box.isEmpty()) {
-          return;
-        }
-
-        const size = new THREE.Vector3();
-        const center = new THREE.Vector3();
-
-        box.getSize(size);
-        box.getCenter(center);
-
-        const localCenter =
-          this.el.object3D.worldToLocal(
-            center.clone()
-          );
-
-        const padding =
-          this.data.padding;
-
-        const minimum =
-          this.data.minimumSize;
-
-        const hitbox =
-          document.createElement('a-box');
-
-        hitbox.setAttribute(
-          'class',
-          'interaction-hitbox interactable'
-        );
-
-        hitbox.setAttribute(
-          'position',
-          `${localCenter.x} ${localCenter.y} ${localCenter.z}`
-        );
-
-        hitbox.setAttribute(
-          'width',
-          Math.max(size.x + padding, minimum)
-        );
-
-        hitbox.setAttribute(
-          'height',
-          Math.max(size.y + padding, minimum)
-        );
-
-        hitbox.setAttribute(
-          'depth',
-          Math.max(size.z + padding, minimum)
-        );
-
-        hitbox.setAttribute(
-          'material',
-          'color: #ffffff; opacity: 0.001; transparent: true; depthWrite: false; side: double'
-        );
-
-        hitbox.setAttribute(
-          'interaction-proxy',
-          `owner: #${this.el.id}`
-        );
-
-        this.el.appendChild(hitbox);
-
-        const rightRaycaster =
-          document.querySelector('#rightHand');
-
-        if (
-          rightRaycaster &&
-          rightRaycaster.components.raycaster &&
-          rightRaycaster.components.raycaster.refreshObjects
-        ) {
-          rightRaycaster.components.raycaster.refreshObjects();
-        }
-      }
-    });
-
-
-    /* ============================================================
-       6. GRAB AND DROP TEDDY / HAIRPIN
-
-       Desktop:
-       Click an object to pick it up.
-       Click it again to drop it.
-
-       VR:
-       Right trigger picks it up.
-       Right grip button drops the held object.
+       Desktop: click to pick up, click again to drop.
+       VR: move the hand near the item and hold grip.
     ============================================================ */
     AFRAME.registerComponent('natural-grabbable', {
       schema: {
@@ -906,11 +754,6 @@
         this.dropRay = new THREE.Raycaster();
         this.dropRay.far = 2.5;
 
-        /*
-          Desktop fallback:
-          click once to pick up, click again to put down.
-          VR uses grip proximity instead.
-        */
         this.el.addEventListener('click', () => {
           if (this.el.sceneEl.is('vr-mode')) {
             return;
@@ -974,10 +817,6 @@
 
         newParent.object3D.updateMatrixWorld(true);
 
-        /*
-          Moving the actual A-Frame element keeps the DOM and
-          Three.js scene graph synchronized.
-        */
         newParent.appendChild(this.el);
 
         const inverseParentWorld =
@@ -1010,11 +849,6 @@
         this.velocity.set(0, 0, 0);
         this.heldBy = handEntity;
 
-        /*
-          Preserve the exact contact offset instead of snapping the
-          object to a fixed point. The object remains where the hand
-          touched it and then follows the hand naturally.
-        */
         this.reparentPreserveWorld(
           handEntity
         );
@@ -1057,10 +891,6 @@
           this.data.maxThrowSpeed
         );
 
-        /*
-          A gentle release places the object on the nearby surface.
-          A faster release continues with throwing motion.
-        */
         if (this.velocity.length() < 0.22) {
           const settled =
             this.settleOnNearbySurface(0.45);
@@ -1189,9 +1019,6 @@
           dt
         );
 
-        /*
-          Mild air resistance keeps extreme throws under control.
-        */
         const damping =
           Math.pow(0.985, dt * 60);
 
@@ -1226,12 +1053,6 @@
           }
         }
 
-        /*
-          While falling slowly, occasionally check whether a table,
-          bed or other nearby room surface is directly underneath.
-          This runs only for a released moving item, not every room
-          mesh every frame.
-        */
         if (
           this.isMoving &&
           this.velocity.y <= 0 &&
@@ -1252,14 +1073,20 @@
     /* ============================================================
        NATURAL VR HAND GRAB
 
-       Move the controller close to an item.
-       Hold the side grip button to grab it.
-       Keep holding while moving it.
-       Release grip to drop or throw it.
+       FIX: radius increased from 0.24 (about fist-sized reach,
+       very easy to be "just barely" out of range without realizing
+       it) to 0.4 — closer to how most VR games size their grab
+       zone, so the item grabs reliably once your hand visually
+       overlaps or nearly touches it.
+
+       Also now writes a live "distance to nearest grabbable" line
+       to the debug HUD every frame, so you can literally watch the
+       number and see whether you're in range before pressing grip
+       — no more guessing blind.
     ============================================================ */
     AFRAME.registerComponent('natural-grab-hand', {
       schema: {
-        radius: { default: 0.24 },
+        radius: { default: 0.4 },
         velocitySmoothing: { default: 0.35 }
       },
 
@@ -1279,6 +1106,7 @@
           new THREE.Vector3();
 
         this.hasPreviousPosition = false;
+        this.lastHudUpdate = 0;
 
         this.el.addEventListener(
           'gripdown',
@@ -1296,11 +1124,7 @@
         );
       },
 
-      grabNearest: function () {
-        if (this.heldItem) {
-          return;
-        }
-
+      findNearest: function () {
         const handPosition =
           new THREE.Vector3();
 
@@ -1309,8 +1133,8 @@
         );
 
         let nearest = null;
-        let nearestDistance =
-          this.data.radius;
+        let nearestEl = null;
+        let nearestDistance = Infinity;
 
         this.el.sceneEl
           .querySelectorAll(
@@ -1334,22 +1158,54 @@
                 handPosition
               );
 
-            if (distance <= nearestDistance) {
+            if (distance < nearestDistance) {
               nearest = component;
+              nearestEl = entity;
               nearestDistance = distance;
             }
           });
 
-        if (!nearest) {
+        return { nearest, nearestEl, nearestDistance };
+      },
+
+      grabNearest: function () {
+        if (this.heldItem) {
+          return;
+        }
+
+        const { nearest, nearestEl, nearestDistance } =
+          this.findNearest();
+
+        if (!nearest || nearestDistance > this.data.radius) {
           console.log(
             this.el.id,
-            'grip pressed, but no item was close enough.'
+            'grip pressed, but no item was close enough. Nearest was',
+            nearestEl ? nearestEl.id : 'none',
+            'at',
+            isFinite(nearestDistance) ? nearestDistance.toFixed(2) + 'm' : 'n/a'
           );
+
+          if (window.updateDebugHud) {
+            window.updateDebugHud(
+              'Grip pressed, out of range. Nearest: ' +
+              (nearestEl ? nearestEl.id : 'none') +
+              ' at ' +
+              (isFinite(nearestDistance) ? nearestDistance.toFixed(2) + 'm' : 'n/a') +
+              ' (need <= ' + this.data.radius + 'm)'
+            );
+          }
+
           return;
         }
 
         if (nearest.grab(this.el)) {
           this.heldItem = nearest;
+
+          if (window.updateDebugHud) {
+            window.updateDebugHud(
+              'Grabbed: ' + (nearestEl ? nearestEl.id : 'item')
+            );
+          }
         }
       },
 
@@ -1366,6 +1222,10 @@
         released.release(
           this.smoothedVelocity.clone()
         );
+
+        if (window.updateDebugHud) {
+          window.updateDebugHud('Released item.');
+        }
       },
 
       tick: function (time, deltaTime) {
@@ -1389,25 +1249,49 @@
         const seconds =
           deltaTime / 1000;
 
-        if (seconds <= 0) {
-          return;
+        if (seconds > 0) {
+          this.instantVelocity
+            .subVectors(
+              this.currentPosition,
+              this.previousPosition
+            )
+            .divideScalar(seconds);
+
+          this.smoothedVelocity.lerp(
+            this.instantVelocity,
+            this.data.velocitySmoothing
+          );
+
+          this.previousPosition.copy(
+            this.currentPosition
+          );
         }
 
-        this.instantVelocity
-          .subVectors(
-            this.currentPosition,
-            this.previousPosition
-          )
-          .divideScalar(seconds);
+        /*
+          Live "distance to nearest grabbable" readout, throttled to
+          ~6 times per second so it doesn't spam querySelectorAll
+          every single frame.
+        */
+        if (!this.heldItem && time - this.lastHudUpdate > 150) {
+          this.lastHudUpdate = time;
 
-        this.smoothedVelocity.lerp(
-          this.instantVelocity,
-          this.data.velocitySmoothing
-        );
+          const { nearestEl, nearestDistance } =
+            this.findNearest();
 
-        this.previousPosition.copy(
-          this.currentPosition
-        );
+          if (window.updateDebugHud) {
+            if (nearestEl) {
+              const inRange = nearestDistance <= this.data.radius;
+              window.updateDebugHud(
+                (inRange ? '[IN RANGE] ' : '') +
+                'Nearest to ' + this.el.id + ': ' + nearestEl.id +
+                ' @ ' + nearestDistance.toFixed(2) + 'm (grip range ' +
+                this.data.radius + 'm)'
+              );
+            } else {
+              window.updateDebugHud('No grabbable items found in scene.');
+            }
+          }
+        }
       }
     });
 
@@ -1415,8 +1299,14 @@
     /* ============================================================
        RIGHT TRIGGER: DOOR ONLY
 
-       Item grabbing is handled by grip proximity, so the trigger
-       remains free for opening and closing the door.
+       FIX: raycaster objects widened from ".door" to ".door, .item"
+       so the teddy/hairpin's mouseenter/mouseleave hover animations
+       actually fire again in VR (they need something raycasting at
+       them to trigger). useDoor() still only reacts to elements
+       that resolve to a door-hinge component, so widening this list
+       doesn't cause the trigger to accidentally grab items — grip
+       proximity still owns grabbing, trigger still only opens/closes
+       the door.
     ============================================================ */
     AFRAME.registerComponent('vr-door-interactor', {
       init: function () {
@@ -1506,19 +1396,11 @@
 
     /* ============================================================
        8. AUDIO UNLOCK
-
-       No visible start screen is used.
-       Audio starts after the first click, key press, controller
-       trigger or after entering VR.
     ============================================================ */
-    /* Native audio button replaces the old audio-unlock component. */
 
 
     /* ============================================================
        9. FOOTSTEPS
-
-       Attached to the player rig so thumbstick and keyboard
-       movement can trigger the footsteps.
     ============================================================ */
     AFRAME.registerComponent('footstep-player', {
       schema: {
@@ -1639,8 +1521,6 @@
 
     <!-- ======================================================
          LIGHTS
-
-         Shadows are disabled for better Quest performance.
     ======================================================= -->
     <a-light
       type="ambient"
@@ -1687,8 +1567,6 @@
 
     <!-- ======================================================
          SPLIT ROOM MODELS
-
-         Each model loads independently.
     ======================================================= -->
     <a-entity
       id="wallandground"
@@ -1752,8 +1630,6 @@
 
     <!-- ======================================================
          FALLBACK TELEPORT FLOOR
-
-         Change Y=0.01 if your real floor is at another height.
     ======================================================= -->
     <a-plane
       id="fallback-teleport-floor"
@@ -1770,12 +1646,6 @@
         transparent: true;
         depthWrite: false">
     </a-plane>
-
-
-    <!--
-         Room ambience is played by the native audio elements
-         near the top of the page.
-    -->
 
 
     <!-- ======================================================
@@ -1860,13 +1730,6 @@
 
     <!-- ======================================================
          PLAYER RIG
-
-         Stability change:
-         movement-controls is on the rig, not the camera.
-
-         Collision calculations are temporarily disabled because
-         they were the likely cause of Quest freezing. This means
-         the player can currently move through walls.
     ======================================================= -->
     <a-entity
       id="rig"
@@ -1908,6 +1771,24 @@
         </a-entity>
 
 
+        <!-- IN-HEADSET DEBUG PANEL
+             Shows live grab-range distance and trigger/grip results
+             directly inside the headset. Delete this entity (and
+             the #debugHud div in the body, and updateDebugHud calls)
+             once everything is confirmed working well. -->
+        <a-entity
+          id="debugHudVR"
+          position="0 -0.25 -0.6"
+          text="
+            value: Debug HUD ready.;
+            color: #9fffb0;
+            align: center;
+            width: 1;
+            wrapCount: 28;
+            baseline: center">
+        </a-entity>
+
+
         <!-- Desktop cursor -->
         <a-cursor
           color="#ffffff"
@@ -1926,7 +1807,7 @@
       </a-entity>
 
 
-      <!-- Left controller: teleport -->
+      <!-- Left controller: teleport + natural grab -->
       <a-entity
         id="leftHand"
 
@@ -1942,12 +1823,16 @@
           rotateOnTeleport: false"
 
         natural-grab-hand="
-          radius: 0.24;
+          radius: 0.4;
           velocitySmoothing: 0.35">
       </a-entity>
 
 
-      <!-- Right controller: interact -->
+      <!-- Right controller: door trigger + natural grab
+
+           FIX: raycaster objects widened to ".door, .item" so
+           hover animations work on items again; grab radius raised
+           to 0.4 to match the left hand. -->
       <a-entity
         id="rightHand"
 
@@ -1955,7 +1840,7 @@
           hand: right"
 
         raycaster="
-          objects: .door;
+          objects: .door, .item;
           far: 6;
           interval: 50;
           showLine: true;
@@ -1963,7 +1848,7 @@
           lineOpacity: 0.8"
 
         natural-grab-hand="
-          radius: 0.24;
+          radius: 0.4;
           velocitySmoothing: 0.35"
 
         vr-door-interactor>
