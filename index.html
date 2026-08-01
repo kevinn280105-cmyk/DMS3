@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Natural Grab + Reachable Radius</title>
+  <title>VR Room - No Green Debug Text + Single Door Selection</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -57,20 +57,6 @@
       cursor: default;
     }
 
-    #debugHud {
-      position: fixed;
-      top: 16px;
-      right: 16px;
-      z-index: 1000;
-      max-width: 320px;
-      padding: 10px 14px;
-      border: 1px solid rgba(255,255,255,0.6);
-      border-radius: 8px;
-      color: #9fffb0;
-      background: rgba(0,0,0,0.82);
-      font: 13px monospace;
-      white-space: pre-wrap;
-    }
   </style>
 </head>
 
@@ -79,15 +65,6 @@
   <button id="soundButton" type="button" onclick="enableSound()">
     ENABLE SOUND
   </button>
-
-  <!--
-    DEBUG HUD: desktop-only overlay. The in-headset version is the
-    a-text entity attached to the camera further down (id=debugHudVR)
-    — this div does NOT show up inside an active VR session, WebXR
-    fullscreen only renders the 3D canvas. Remove both once grabbing
-    is confirmed working well.
-  -->
-  <div id="debugHud">Debug HUD ready.</div>
 
   <!--
     Native browser audio is used here because it is more reliable
@@ -232,27 +209,6 @@
     }
 
     window.enableSound = enableSound;
-
-    /* ============================================================
-       SHARED DEBUG HUD WRITER
-
-       Updates both the desktop overlay div and the in-headset text
-       panel attached to the camera, so the same message is readable
-       on a computer or inside the Quest.
-    ============================================================ */
-    function updateDebugHud(message) {
-      const div = document.querySelector('#debugHud');
-      if (div) {
-        div.textContent = message;
-      }
-
-      const vrPanel = document.querySelector('#debugHudVR');
-      if (vrPanel) {
-        vrPanel.setAttribute('text', 'value', message);
-      }
-    }
-
-    window.updateDebugHud = updateDebugHud;
 
     /* ============================================================
        1. FLICKERING LIGHTS
@@ -497,28 +453,31 @@
         },
 
         speed: { default: 7 },
-
         direction: { default: 1 }
       },
 
       init: function () {
-        this.isOpen = false;
-        this.currentAngle = 0;
-        this.targetAngle = 0;
-        this.pivot = null;
+        this.root = null;
+        this.parts = [];
+        this.partStates = new Map();
         this.lastActivation = 0;
-
-        this.activate =
-          this.activate.bind(this);
 
         this.el.addEventListener(
           'model-loaded',
-          () => this.createRealHinge()
+          () => this.prepareDoorParts()
         );
 
         this.el.addEventListener(
           'activate-object',
-          this.activate
+          (event) => {
+            const hitObject =
+              event.detail &&
+              event.detail.object
+                ? event.detail.object
+                : null;
+
+            this.activatePart(hitObject);
+          }
         );
 
         this.el.addEventListener(
@@ -532,24 +491,116 @@
               event.stopPropagation();
             }
 
-            this.activate();
+            const hitObject =
+              event.detail &&
+              event.detail.intersection
+                ? event.detail.intersection.object
+                : null;
+
+            this.activatePart(hitObject);
           }
         );
       },
 
-      getLocalBoundingBox: function (model) {
-        const localBox = new THREE.Box3();
-        localBox.makeEmpty();
+      hasMeshDescendant: function (object) {
+        let found = false;
+
+        object.traverse((node) => {
+          if (node.isMesh) {
+            found = true;
+          }
+        });
+
+        return found;
+      },
+
+      prepareDoorParts: function () {
+        this.root =
+          this.el.getObject3D('mesh');
+
+        if (!this.root) {
+          return;
+        }
+
+        /*
+          Skip glTF wrapper groups that contain only one meaningful
+          child. The first branching level is treated as separate
+          door objects.
+        */
+        let container = this.root;
+
+        while (true) {
+          const meaningfulChildren =
+            container.children.filter(
+              child =>
+                this.hasMeshDescendant(child)
+            );
+
+          if (
+            meaningfulChildren.length !== 1 ||
+            meaningfulChildren[0].isMesh
+          ) {
+            break;
+          }
+
+          container = meaningfulChildren[0];
+        }
+
+        this.parts =
+          container.children.filter(
+            child =>
+              this.hasMeshDescendant(child)
+          );
+
+        if (!this.parts.length) {
+          this.parts = [container];
+        }
+
+        console.log(
+          `Door model contains ${this.parts.length} selectable part(s).`
+        );
+      },
+
+      findPartFromHit: function (hitObject) {
+        let current = hitObject;
+
+        while (current) {
+          if (
+            current.userData &&
+            current.userData.doorPartState
+          ) {
+            return current.userData.doorPartState.part;
+          }
+
+          if (this.parts.includes(current)) {
+            return current;
+          }
+
+          if (current === this.root) {
+            break;
+          }
+
+          current = current.parent;
+        }
+
+        return this.parts.length === 1
+          ? this.parts[0]
+          : null;
+      },
+
+      getLocalBoundingBox: function (part) {
+        const box = new THREE.Box3();
+        box.makeEmpty();
 
         this.el.object3D.updateMatrixWorld(true);
-        model.updateMatrixWorld(true);
+        part.updateMatrixWorld(true);
 
         const inverseEntityWorld =
           new THREE.Matrix4()
             .copy(this.el.object3D.matrixWorld)
             .invert();
 
-        model.traverse((node) => {
+        part.traverse((node) => {
           if (!node.isMesh || !node.geometry) {
             return;
           }
@@ -573,28 +624,22 @@
               .clone()
               .applyMatrix4(nodeToEntity);
 
-          localBox.union(nodeBox);
+          box.union(nodeBox);
         });
 
-        return localBox;
+        return box;
       },
 
-      createRealHinge: function () {
-        const model =
-          this.el.getObject3D('mesh');
-
-        if (!model || this.pivot) {
-          return;
+      createState: function (part) {
+        if (this.partStates.has(part)) {
+          return this.partStates.get(part);
         }
 
-        this.el.object3D.updateMatrixWorld(true);
-        model.updateMatrixWorld(true);
-
         const box =
-          this.getLocalBoundingBox(model);
+          this.getLocalBoundingBox(part);
 
         if (box.isEmpty()) {
-          return;
+          return null;
         }
 
         const size = new THREE.Vector3();
@@ -625,89 +670,79 @@
           new THREE.Group();
 
         pivot.name =
-          'real-door-edge-hinge';
+          'individual-door-hinge';
 
         pivot.position.copy(
           hingePosition
         );
 
-        model.updateMatrix();
-
-        const oldLocalMatrix =
-          model.matrix.clone();
-
         this.el.object3D.add(pivot);
-        this.el.object3D.remove(model);
-        pivot.add(model);
 
-        const inversePivotMatrix =
-          new THREE.Matrix4().makeTranslation(
-            -hingePosition.x,
-            -hingePosition.y,
-            -hingePosition.z
-          );
+        /*
+          Only the selected internal door part is moved underneath
+          this hinge. Other door parts stay where they are.
+        */
+        pivot.attach(part);
 
-        const modelInsidePivot =
-          new THREE.Matrix4().multiplyMatrices(
-            inversePivotMatrix,
-            oldLocalMatrix
-          );
+        const state = {
+          part,
+          pivot,
+          isOpen: false,
+          currentAngle: 0,
+          targetAngle: 0
+        };
 
-        modelInsidePivot.decompose(
-          model.position,
-          model.quaternion,
-          model.scale
-        );
+        part.userData.doorPartState = state;
+        this.partStates.set(part, state);
 
-        model.updateMatrix();
-        model.updateMatrixWorld(true);
-
-        this.pivot = pivot;
-
-        console.log(
-          'Real door hinge created:',
-          this.data.hingeSide,
-          'edge stays fixed.'
-        );
+        return state;
       },
 
-      activate: function () {
+      activatePart: function (hitObject) {
         const now =
           performance.now();
 
         if (
           now - this.lastActivation <
-          450
+          350
         ) {
           return;
         }
 
+        const part =
+          this.findPartFromHit(hitObject);
+
+        if (!part) {
+          console.warn(
+            'The clicked internal door part could not be identified.'
+          );
+          return;
+        }
+
+        const state =
+          this.createState(part);
+
+        if (!state) {
+          return;
+        }
+
         this.lastActivation = now;
-        this.isOpen = !this.isOpen;
+        state.isOpen = !state.isOpen;
 
         const degrees =
-          this.isOpen
+          state.isOpen
             ? this.data.openAngle *
               this.data.direction
             : 0;
 
-        this.targetAngle =
+        state.targetAngle =
           THREE.MathUtils.degToRad(
             degrees
           );
-
-        console.log(
-          this.isOpen
-            ? 'Door opening.'
-            : 'Door closing.'
-        );
       },
 
       tick: function (time, deltaTime) {
-        if (
-          !this.pivot ||
-          !deltaTime
-        ) {
+        if (!deltaTime) {
           return;
         }
 
@@ -718,15 +753,17 @@
             this.data.speed
           );
 
-        this.currentAngle =
-          THREE.MathUtils.lerp(
-            this.currentAngle,
-            this.targetAngle,
-            amount
-          );
+        this.partStates.forEach((state) => {
+          state.currentAngle =
+            THREE.MathUtils.lerp(
+              state.currentAngle,
+              state.targetAngle,
+              amount
+            );
 
-        this.pivot.rotation.y =
-          this.currentAngle;
+          state.pivot.rotation.y =
+            state.currentAngle;
+        });
       }
     });
 
@@ -753,6 +790,9 @@
 
         this.dropRay = new THREE.Raycaster();
         this.dropRay.far = 2.5;
+
+        this.cachedRoomMeshes = [];
+        this.roomMeshCacheTime = 0;
 
         this.el.addEventListener('click', () => {
           if (this.el.sceneEl.is('vr-mode')) {
@@ -908,6 +948,20 @@
       },
 
       getRoomMeshes: function () {
+        const now = performance.now();
+
+        /*
+          Reuse the room mesh list for five seconds. The old code
+          traversed all six GLB models repeatedly while an item was
+          falling, which can cause unnecessary Quest stutter.
+        */
+        if (
+          this.cachedRoomMeshes.length &&
+          now - this.roomMeshCacheTime < 5000
+        ) {
+          return this.cachedRoomMeshes;
+        }
+
         const meshes = [];
 
         this.el.sceneEl
@@ -929,7 +983,10 @@
             });
           });
 
-        return meshes;
+        this.cachedRoomMeshes = meshes;
+        this.roomMeshCacheTime = now;
+
+        return this.cachedRoomMeshes;
       },
 
       settleOnNearbySurface: function (maximumDistance) {
@@ -1107,21 +1164,61 @@
 
         this.hasPreviousPosition = false;
         this.lastHudUpdate = 0;
+        this.gripHeld = false;
 
+        this.beginGrip =
+          this.beginGrip.bind(this);
+
+        this.endGrip =
+          this.endGrip.bind(this);
+
+        /*
+          hand-controls normally emits gripdown/gripup.
+          squeezestart/squeezeend are included as a WebXR fallback.
+          gripHeld prevents the same physical press firing twice.
+        */
         this.el.addEventListener(
           'gripdown',
-          () => this.grabNearest()
+          this.beginGrip
+        );
+
+        this.el.addEventListener(
+          'squeezestart',
+          this.beginGrip
         );
 
         this.el.addEventListener(
           'gripup',
-          () => this.releaseHeld()
+          this.endGrip
+        );
+
+        this.el.addEventListener(
+          'squeezeend',
+          this.endGrip
         );
 
         this.el.addEventListener(
           'controllerdisconnected',
-          () => this.releaseHeld()
+          this.endGrip
         );
+      },
+
+      beginGrip: function () {
+        if (this.gripHeld) {
+          return;
+        }
+
+        this.gripHeld = true;
+        this.grabNearest();
+      },
+
+      endGrip: function () {
+        if (!this.gripHeld && !this.heldItem) {
+          return;
+        }
+
+        this.gripHeld = false;
+        this.releaseHeld();
       },
 
       findNearest: function () {
@@ -1310,7 +1407,7 @@
     ============================================================ */
     AFRAME.registerComponent('vr-door-interactor', {
       init: function () {
-        this.triggerHeld = false;
+        this.lastTriggerTime = 0;
 
         this.el.addEventListener(
           'triggerdown',
@@ -1319,19 +1416,18 @@
               event.stopPropagation();
             }
 
-            if (this.triggerHeld) {
+            const now =
+              performance.now();
+
+            if (
+              now - this.lastTriggerTime <
+              350
+            ) {
               return;
             }
 
-            this.triggerHeld = true;
+            this.lastTriggerTime = now;
             this.useDoor();
-          }
-        );
-
-        this.el.addEventListener(
-          'triggerup',
-          () => {
-            this.triggerHeld = false;
           }
         );
       },
@@ -1340,7 +1436,10 @@
         const raycaster =
           this.el.components.raycaster;
 
-        if (!raycaster) {
+        const door =
+          document.querySelector('#door');
+
+        if (!raycaster || !door) {
           return;
         }
 
@@ -1348,48 +1447,22 @@
           raycaster.refreshObjects();
         }
 
-        const intersections =
-          raycaster.intersections || [];
+        const intersection =
+          raycaster.getIntersection
+            ? raycaster.getIntersection(door)
+            : null;
 
-        let hitElement = null;
-
-        if (
-          intersections.length > 0 &&
-          intersections[0].object
-        ) {
-          hitElement =
-            intersections[0].object.el || null;
+        if (!intersection) {
+          return;
         }
 
-        if (
-          !hitElement &&
-          raycaster.intersectedEls &&
-          raycaster.intersectedEls.length
-        ) {
-          hitElement =
-            raycaster.intersectedEls[0];
-        }
-
-        let current = hitElement;
-
-        while (
-          current &&
-          current !== this.el.sceneEl
-        ) {
-          if (
-            current.components &&
-            current.components['door-hinge']
-          ) {
-            current.emit(
-              'activate-object',
-              {},
-              false
-            );
-            return;
-          }
-
-          current = current.parentElement;
-        }
+        door.emit(
+          'activate-object',
+          {
+            object: intersection.object
+          },
+          false
+        );
       }
     });
 
@@ -1771,24 +1844,6 @@
         </a-entity>
 
 
-        <!-- IN-HEADSET DEBUG PANEL
-             Shows live grab-range distance and trigger/grip results
-             directly inside the headset. Delete this entity (and
-             the #debugHud div in the body, and updateDebugHud calls)
-             once everything is confirmed working well. -->
-        <a-entity
-          id="debugHudVR"
-          position="0 -0.25 -0.6"
-          text="
-            value: Debug HUD ready.;
-            color: #9fffb0;
-            align: center;
-            width: 1;
-            wrapCount: 28;
-            baseline: center">
-        </a-entity>
-
-
         <!-- Desktop cursor -->
         <a-cursor
           color="#ffffff"
@@ -1840,7 +1895,7 @@
           hand: right"
 
         raycaster="
-          objects: .door, .item;
+          objects: #door;
           far: 6;
           interval: 50;
           showLine: true;
