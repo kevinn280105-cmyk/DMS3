@@ -1130,21 +1130,31 @@
     /* ============================================================
        NATURAL VR HAND GRAB
 
-       FIX: radius increased from 0.24 (about fist-sized reach,
-       very easy to be "just barely" out of range without realizing
-       it) to 0.4 — closer to how most VR games size their grab
-       zone, so the item grabs reliably once your hand visually
-       overlaps or nearly touches it.
+       FIX (this pass): grabbing was completely failing in the
+       headset. Two likely causes are handled defensively now,
+       since they can't both be tested without a live Quest:
 
-       Also now writes a live "distance to nearest grabbable" line
-       to the debug HUD every frame, so you can literally watch the
-       number and see whether you're in range before pressing grip
-       — no more guessing blind.
+       1. Some Quest Browser builds only report the grip trigger as
+          a continuous analog "gripchanged" value and never fire a
+          clean boolean "gripdown"/"gripup" pair. We now also watch
+          "gripchanged" and manually cross a 0.5 press threshold to
+          trigger grab/release, so grabbing works either way.
+
+       2. The proximity radius (how close your hand has to be) was
+          tight. Raised 0.4 -> 0.55m so it's much more forgiving.
+
+       3. Added a fallback grab button (A / X, i.e. the lower face
+          button on each Touch controller) as "abuttondown" /
+          "xbuttondown". If grip still doesn't work for some reason,
+          you can grab/release with that button instead — and it
+          also tells you (via which button works) whether the issue
+          is specifically the grip mapping.
     ============================================================ */
     AFRAME.registerComponent('natural-grab-hand', {
       schema: {
-        radius: { default: 0.4 },
-        velocitySmoothing: { default: 0.35 }
+        radius: { default: 0.55 },
+        velocitySmoothing: { default: 0.35 },
+        gripThreshold: { default: 0.5 }
       },
 
       init: function () {
@@ -1165,12 +1175,16 @@
         this.hasPreviousPosition = false;
         this.lastHudUpdate = 0;
         this.gripHeld = false;
+        this.analogGripHeld = false;
 
         this.beginGrip =
           this.beginGrip.bind(this);
 
         this.endGrip =
           this.endGrip.bind(this);
+
+        this.onGripChanged =
+          this.onGripChanged.bind(this);
 
         /*
           hand-controls normally emits gripdown/gripup.
@@ -1197,10 +1211,70 @@
           this.endGrip
         );
 
+        /*
+          Analog fallback: if only "gripchanged" fires (no discrete
+          down/up on this device/browser), derive a press/release
+          from the raw axis value crossing gripThreshold.
+        */
+        this.el.addEventListener(
+          'gripchanged',
+          this.onGripChanged
+        );
+
+        /*
+          Face-button fallback grab, in case grip mapping itself
+          isn't working on this controller: A button on the right
+          Touch controller, X button on the left one.
+        */
+        this.el.addEventListener(
+          'abuttondown',
+          this.beginGrip
+        );
+
+        this.el.addEventListener(
+          'abuttonup',
+          this.endGrip
+        );
+
+        this.el.addEventListener(
+          'xbuttondown',
+          this.beginGrip
+        );
+
+        this.el.addEventListener(
+          'xbuttonup',
+          this.endGrip
+        );
+
         this.el.addEventListener(
           'controllerdisconnected',
           this.endGrip
         );
+      },
+
+      onGripChanged: function (event) {
+        const value =
+          event && event.detail &&
+          typeof event.detail.value === 'number'
+            ? event.detail.value
+            : (event && typeof event.detail === 'number'
+                ? event.detail
+                : null);
+
+        if (value === null) {
+          return;
+        }
+
+        const isPressed =
+          value >= this.data.gripThreshold;
+
+        if (isPressed && !this.analogGripHeld) {
+          this.analogGripHeld = true;
+          this.beginGrip();
+        } else if (!isPressed && this.analogGripHeld) {
+          this.analogGripHeld = false;
+          this.endGrip();
+        }
       },
 
       beginGrip: function () {
@@ -1878,7 +1952,7 @@
           rotateOnTeleport: false"
 
         natural-grab-hand="
-          radius: 0.4;
+          radius: 0.55;
           velocitySmoothing: 0.35">
       </a-entity>
 
@@ -1887,7 +1961,7 @@
 
            FIX: raycaster objects widened to ".door, .item" so
            hover animations work on items again; grab radius raised
-           to 0.4 to match the left hand. -->
+           to 0.55 to match the left hand. -->
       <a-entity
         id="rightHand"
 
@@ -1903,7 +1977,7 @@
           lineOpacity: 0.8"
 
         natural-grab-hand="
-          radius: 0.4;
+          radius: 0.55;
           velocitySmoothing: 0.35"
 
         vr-door-interactor>
