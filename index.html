@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Door Opens and Closes in Reverse</title>
+  <title>VR Room - Every GLB Has Player Collision</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -441,7 +441,455 @@
 
 
     /* ============================================================
-       5. DOOR OPEN / CLOSE
+       5. QUEST-FRIENDLY PLAYER COLLISION
+
+       Prevents thumbstick/keyboard movement from passing through
+       the loaded room models. It raycasts only while the player is
+       moving and uses horizontal body-height rays, which is much
+       lighter than creating thousands of live physics colliders.
+    ============================================================ */
+    AFRAME.registerComponent('quest-room-collider', {
+      schema: {
+        objects: {
+          default: '[gltf-model]'
+        },
+
+        radius: {
+          default: 0.32
+        },
+
+        skin: {
+          default: 0.035
+        },
+
+        maxSubstep: {
+          default: 0.12
+        },
+
+        /*
+          Large jumps are treated as teleporting rather than walking,
+          so blink teleport still works.
+        */
+        teleportDistance: {
+          default: 0.75
+        }
+      },
+
+      init: function () {
+        this.colliderMeshes = [];
+
+        this.lastPosition =
+          this.el.object3D.position.clone();
+
+        this.raycaster =
+          new THREE.Raycaster();
+
+        this.from =
+          new THREE.Vector3();
+
+        this.to =
+          new THREE.Vector3();
+
+        this.delta =
+          new THREE.Vector3();
+
+        this.direction =
+          new THREE.Vector3();
+
+        this.side =
+          new THREE.Vector3();
+
+        this.origin =
+          new THREE.Vector3();
+
+        this.safePosition =
+          new THREE.Vector3();
+
+        this.step =
+          new THREE.Vector3();
+
+        this.testPosition =
+          new THREE.Vector3();
+
+        this.refreshColliders =
+          this.refreshColliders.bind(this);
+
+        this.el.sceneEl.addEventListener(
+          'loaded',
+          this.refreshColliders
+        );
+
+        this.el.sceneEl.addEventListener(
+          'enter-vr',
+          () => this.resetPosition()
+        );
+
+        this.el.sceneEl.addEventListener(
+          'exit-vr',
+          () => this.resetPosition()
+        );
+
+        /*
+          Refresh after each GLB finishes loading.
+        */
+        this.el.sceneEl
+          .querySelectorAll(this.data.objects)
+          .forEach((entity) => {
+            entity.addEventListener(
+              'model-loaded',
+              this.refreshColliders
+            );
+          });
+
+        window.setTimeout(
+          this.refreshColliders,
+          1000
+        );
+      },
+
+      resetPosition: function () {
+        this.lastPosition.copy(
+          this.el.object3D.position
+        );
+      },
+
+      refreshColliders: function () {
+        const meshes = [];
+
+        this.el.sceneEl
+          .querySelectorAll(this.data.objects)
+          .forEach((entity) => {
+            const root =
+              entity.getObject3D('mesh');
+
+            if (!root) {
+              return;
+            }
+
+            root.traverse((node) => {
+              if (
+                node.isMesh &&
+                node.geometry &&
+                node.visible
+              ) {
+                node.userData.collisionEntity =
+                  entity;
+
+                meshes.push(node);
+              }
+            });
+          });
+
+        this.colliderMeshes = meshes;
+
+        console.log(
+          `Player collision loaded ${meshes.length} mesh collider(s).`
+        );
+      },
+
+      isBlocked: function (from, to) {
+        if (!this.colliderMeshes.length) {
+          return false;
+        }
+
+        this.delta.subVectors(
+          to,
+          from
+        );
+
+        this.delta.y = 0;
+
+        const distance =
+          this.delta.length();
+
+        if (distance < 0.0001) {
+          return false;
+        }
+
+        this.direction
+          .copy(this.delta)
+          .normalize();
+
+        this.side.set(
+          -this.direction.z,
+          0,
+          this.direction.x
+        );
+
+        /*
+          Rays cover the player's left side, centre and right side
+          at foot, waist and upper-body heights.
+        */
+        const heights = [
+          0.22,
+          0.85,
+          1.42
+        ];
+
+        const sideOffsets = [
+          -this.data.radius * 0.72,
+          0,
+          this.data.radius * 0.72
+        ];
+
+        const rayLength =
+          distance +
+          this.data.radius +
+          this.data.skin;
+
+        for (
+          let heightIndex = 0;
+          heightIndex < heights.length;
+          heightIndex++
+        ) {
+          for (
+            let sideIndex = 0;
+            sideIndex < sideOffsets.length;
+            sideIndex++
+          ) {
+            this.origin
+              .copy(from)
+              .addScaledVector(
+                this.side,
+                sideOffsets[sideIndex]
+              );
+
+            this.origin.y +=
+              heights[heightIndex];
+
+            /*
+              A very small forward offset prevents a ray from
+              repeatedly striking the exact surface it just left.
+            */
+            this.origin.addScaledVector(
+              this.direction,
+              0.004
+            );
+
+            this.raycaster.set(
+              this.origin,
+              this.direction
+            );
+
+            this.raycaster.near = 0;
+            this.raycaster.far = rayLength;
+
+            const hits =
+              this.raycaster.intersectObjects(
+                this.colliderMeshes,
+                false
+              );
+
+            /*
+              Ignore an item while it is being held by either hand.
+              All other loaded GLB models remain solid.
+            */
+            const blockingHit =
+              hits.find((hit) => {
+                const owner =
+                  hit.object &&
+                  hit.object.userData
+                    ? hit.object.userData.collisionEntity
+                    : null;
+
+                if (
+                  owner &&
+                  owner.is &&
+                  owner.is('grabbed')
+                ) {
+                  return false;
+                }
+
+                return (
+                  hit.distance <= rayLength
+                );
+              });
+
+            if (blockingHit) {
+              return true;
+            }
+          }
+        }
+
+        return false;
+      },
+
+      moveWithSliding: function (
+        start,
+        desired
+      ) {
+        this.delta.subVectors(
+          desired,
+          start
+        );
+
+        this.delta.y = 0;
+
+        const distance =
+          this.delta.length();
+
+        if (distance < 0.0001) {
+          this.safePosition.copy(desired);
+          return this.safePosition;
+        }
+
+        const steps =
+          Math.max(
+            1,
+            Math.ceil(
+              distance /
+              this.data.maxSubstep
+            )
+          );
+
+        this.step
+          .copy(this.delta)
+          .divideScalar(steps);
+
+        this.safePosition.copy(start);
+
+        for (
+          let index = 0;
+          index < steps;
+          index++
+        ) {
+          /*
+            Try the complete diagonal movement first.
+          */
+          this.testPosition
+            .copy(this.safePosition)
+            .add(this.step);
+
+          if (
+            !this.isBlocked(
+              this.safePosition,
+              this.testPosition
+            )
+          ) {
+            this.safePosition.copy(
+              this.testPosition
+            );
+
+            continue;
+          }
+
+          /*
+            When diagonal movement is blocked, try X and Z
+            independently so the player slides along the wall
+            instead of becoming completely stuck.
+          */
+          if (
+            Math.abs(this.step.x) >
+            0.0001
+          ) {
+            this.testPosition.copy(
+              this.safePosition
+            );
+
+            this.testPosition.x +=
+              this.step.x;
+
+            if (
+              !this.isBlocked(
+                this.safePosition,
+                this.testPosition
+              )
+            ) {
+              this.safePosition.x =
+                this.testPosition.x;
+            }
+          }
+
+          if (
+            Math.abs(this.step.z) >
+            0.0001
+          ) {
+            this.testPosition.copy(
+              this.safePosition
+            );
+
+            this.testPosition.z +=
+              this.step.z;
+
+            if (
+              !this.isBlocked(
+                this.safePosition,
+                this.testPosition
+              )
+            ) {
+              this.safePosition.z =
+                this.testPosition.z;
+            }
+          }
+        }
+
+        this.safePosition.y =
+          desired.y;
+
+        return this.safePosition;
+      },
+
+      tick: function () {
+        const current =
+          this.el.object3D.position;
+
+        this.from.copy(
+          this.lastPosition
+        );
+
+        this.to.copy(current);
+
+        const horizontalDistance =
+          Math.hypot(
+            this.to.x - this.from.x,
+            this.to.z - this.from.z
+          );
+
+        /*
+          Blink teleport makes a large instantaneous jump. Allow it
+          and begin collision checks from the new location.
+        */
+        if (
+          horizontalDistance >
+          this.data.teleportDistance
+        ) {
+          this.lastPosition.copy(
+            current
+          );
+
+          return;
+        }
+
+        if (
+          horizontalDistance <
+          0.0001
+        ) {
+          this.lastPosition.y =
+            current.y;
+
+          return;
+        }
+
+        const corrected =
+          this.moveWithSliding(
+            this.from,
+            this.to
+          );
+
+        current.x = corrected.x;
+        current.z = corrected.z;
+
+        this.lastPosition.set(
+          corrected.x,
+          current.y,
+          corrected.z
+        );
+      }
+    });
+
+
+    /* ============================================================
+       6. DOOR OPEN / CLOSE
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
@@ -1932,6 +2380,13 @@
         speed: 0.15;
         controls: gamepad, keyboard, touch;
         fly: false"
+
+      quest-room-collider="
+        objects: [gltf-model];
+        radius: 0.32;
+        skin: 0.035;
+        maxSubstep: 0.12;
+        teleportDistance: 0.75"
 
 
       footstep-player="
