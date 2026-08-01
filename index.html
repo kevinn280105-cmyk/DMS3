@@ -3,90 +3,73 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
- 
-  <title>VR Room - 45 Degree Door + Reliable Teddy Pickup</title>
- 
+
+  <title>VR Room - Stable Quest Version + Fixed Interactions</title>
+
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
- 
+
   <!-- movement-controls for keyboard, touch and VR thumbsticks -->
   <script src="https://cdn.jsdelivr.net/npm/aframe-extras@7.2.0/dist/aframe-extras.min.js"></script>
- 
+
   <!-- Blink teleport -->
   <script src="https://cdn.jsdelivr.net/npm/aframe-blink-controls@0.4.3/dist/aframe-blink-controls.min.js"></script>
- 
+
   <style>
     body {
       margin: 0;
       overflow: hidden;
       background: #020202;
     }
- 
+
     #vignette {
       position: fixed;
       inset: 0;
       z-index: 999;
       pointer-events: none;
- 
+
       background: radial-gradient(
         ellipse at center,
         rgba(0, 0, 0, 0) 50%,
         rgba(5, 8, 5, 0.5) 100%
       );
     }
- 
+
     #soundButton {
       position: fixed;
       top: 16px;
       left: 16px;
       z-index: 1000;
- 
+
       padding: 12px 18px;
       border: 1px solid rgba(255, 255, 255, 0.75);
       border-radius: 8px;
- 
+
       color: white;
       background: rgba(0, 0, 0, 0.82);
- 
+
       font: 600 15px Arial, sans-serif;
       cursor: pointer;
     }
- 
+
     #soundButton:disabled {
       opacity: 0.7;
       cursor: default;
     }
   </style>
 </head>
- 
+
 <body>
   <div id="vignette"></div>
   <button id="soundButton" type="button" onclick="enableSound()">
     ENABLE SOUND
   </button>
- 
+
   <!--
-    DEBUG HUD: shows what the right controller is pointing at and
-    what happens on each trigger press, directly in the headset.
-    No cable or devtools needed to read this. Remove this whole
-    block once grabbing is confirmed working.
+    Native browser audio is used here because it is more reliable
+    on the Quest browser than waiting for an A-Frame sound component
+    to initialise.
   -->
-  <div id="debugHud"
-    style="
-      position: fixed;
-      top: 16px;
-      right: 16px;
-      z-index: 1000;
-      max-width: 320px;
-      padding: 10px 14px;
-      border: 1px solid rgba(255,255,255,0.6);
-      border-radius: 8px;
-      color: #9fffb0;
-      background: rgba(0,0,0,0.82);
-      font: 13px monospace;
-      white-space: pre-wrap;
-    ">Debug HUD ready.</div>
- 
   <audio
     id="fanAudio"
     src="sounds/73347__noisecollector__noisy_ceiling_fan.mp3"
@@ -94,7 +77,7 @@
     loop
     playsinline>
   </audio>
- 
+
   <audio
     id="bedroomRainAudio"
     src="sounds/bedroom-rain.wav"
@@ -102,7 +85,7 @@
     loop
     playsinline>
   </audio>
- 
+
   <audio
     id="fluorescentAudio"
     src="sounds/fluorescent-light.wav"
@@ -110,7 +93,7 @@
     loop
     playsinline>
   </audio>
- 
+
   <audio
     id="tvStaticAudio"
     src="sounds/tv-static.mp3"
@@ -118,7 +101,7 @@
     loop
     playsinline>
   </audio>
- 
+
   <audio
     id="footstepAudio"
     src="sounds/842186__aardsreal__footstep-floor.wav"
@@ -126,7 +109,7 @@
     loop
     playsinline>
   </audio>
- 
+
   <script>
     /* ============================================================
        RELIABLE SOUND BUTTON
@@ -134,14 +117,14 @@
     async function enableSound() {
       const button =
         document.querySelector('#soundButton');
- 
+
       if (!button) {
         return;
       }
- 
+
       button.textContent = 'STARTING SOUND...';
       button.disabled = true;
- 
+
       const tracks = [
         {
           element: document.querySelector('#fanAudio'),
@@ -160,27 +143,27 @@
           volume: 0.08
         }
       ];
- 
+
       const playPromises = tracks.map(({ element, volume }) => {
         if (!element) {
           return Promise.reject(
             new Error('A sound element is missing.')
           );
         }
- 
+
         element.volume = volume;
- 
+
         return element.play();
       });
- 
+
       const results =
         await Promise.allSettled(playPromises);
- 
+
       const successful =
         results.filter(
           result => result.status === 'fulfilled'
         ).length;
- 
+
       results.forEach((result, index) => {
         if (result.status === 'rejected') {
           console.error(
@@ -192,58 +175,36 @@
           );
         }
       });
- 
+
       const scene =
         document.querySelector('a-scene');
- 
+
       if (successful > 0) {
         if (scene) {
           scene.audioUnlocked = true;
         }
- 
+
         button.textContent = 'SOUND ENABLED';
- 
+
         window.setTimeout(() => {
           button.style.display = 'none';
         }, 1200);
- 
+
         console.log(
           `${successful} ambience sound file(s) started.`
         );
       } else {
         button.textContent = 'TRY SOUND AGAIN';
         button.disabled = false;
- 
+
         console.error(
           'No sound file could start. Check the Network and Console tabs.'
         );
       }
     }
- 
+
     window.enableSound = enableSound;
- 
-    /* ============================================================
-       SHARED DEBUG HUD WRITER
- 
-       Updates both the desktop-only overlay div and the in-headset
-       text panel attached to the camera, so the same message is
-       readable whether you're testing on a computer or wearing the
-       Quest.
-    ============================================================ */
-    function updateDebugHud(message) {
-      const div = document.querySelector('#debugHud');
-      if (div) {
-        div.textContent = message;
-      }
- 
-      const vrPanel = document.querySelector('#debugHudVR');
-      if (vrPanel) {
-        vrPanel.setAttribute('text', 'value', message);
-      }
-    }
- 
-    window.updateDebugHud = updateDebugHud;
- 
+
     /* ============================================================
        1. FLICKERING LIGHTS
     ============================================================ */
@@ -253,27 +214,27 @@
         max: { default: 1.2 },
         speed: { default: 0.5 }
       },
- 
+
       init: function () {
         this.seed = Math.random() * 1000;
       },
- 
+
       tick: function (timeMs) {
         const time =
           (timeMs * 0.001 * this.data.speed) +
           this.seed;
- 
+
         const noise = (
           Math.sin(time * 6.1) +
           Math.sin(time * 2.3) +
           Math.sin(time * 11.7)
         ) / 3;
- 
+
         const intensity =
           this.data.min +
           ((noise + 1) / 2) *
           (this.data.max - this.data.min);
- 
+
         this.el.setAttribute(
           'light',
           'intensity',
@@ -281,8 +242,8 @@
         );
       }
     });
- 
- 
+
+
     /* ============================================================
        2. MODEL LOAD STATUS
     ============================================================ */
@@ -290,14 +251,14 @@
       schema: {
         name: { default: '3D model' }
       },
- 
+
       init: function () {
         this.el.addEventListener('model-loaded', () => {
           console.log(
             `${this.data.name} loaded successfully.`
           );
         });
- 
+
         this.el.addEventListener('model-error', (event) => {
           console.error(
             `${this.data.name} failed to load.`,
@@ -306,8 +267,8 @@
         });
       }
     });
- 
- 
+
+
     /* ============================================================
        3. CREATE TELEPORT FLOORS FROM NAMED BLENDER OBJECTS
     ============================================================ */
@@ -315,7 +276,7 @@
       schema: {
         floorNames: {
           type: 'array',
- 
+
           default: [
             'san nha phong khach',
             'san nha phong an',
@@ -325,20 +286,20 @@
           ]
         }
       },
- 
+
       init: function () {
         this.el.addEventListener('model-loaded', () => {
           const root = this.el.getObject3D('mesh');
- 
+
           if (!root) {
             return;
           }
- 
+
           root.updateMatrixWorld(true);
- 
+
           let container =
             document.querySelector('#generated-teleport-floors');
- 
+
           if (!container) {
             container = document.createElement('a-entity');
             container.setAttribute(
@@ -347,61 +308,61 @@
             );
             this.el.sceneEl.appendChild(container);
           }
- 
+
           this.data.floorNames.forEach((name) => {
             const object = root.getObjectByName(name);
- 
+
             if (!object) {
               return;
             }
- 
+
             object.updateMatrixWorld(true);
- 
+
             const box =
               new THREE.Box3().setFromObject(object);
- 
+
             if (box.isEmpty()) {
               return;
             }
- 
+
             const size = new THREE.Vector3();
             const center = new THREE.Vector3();
- 
+
             box.getSize(size);
             box.getCenter(center);
- 
+
             const plane = document.createElement('a-plane');
- 
+
             plane.setAttribute('class', 'floor');
             plane.setAttribute('rotation', '-90 0 0');
- 
+
             plane.setAttribute(
               'width',
               Math.max(size.x, 0.1)
             );
- 
+
             plane.setAttribute(
               'height',
               Math.max(size.z, 0.1)
             );
- 
+
             plane.setAttribute(
               'position',
               `${center.x} ${box.min.y + 0.02} ${center.z}`
             );
- 
+
             plane.setAttribute(
               'material',
               'opacity: 0; transparent: true; depthWrite: false'
             );
- 
+
             container.appendChild(plane);
           });
         });
       }
     });
- 
- 
+
+
     /* ============================================================
        4. DESKTOP HEAD BOB
     ============================================================ */
@@ -410,41 +371,41 @@
         amount: { default: 0.025 },
         speed: { default: 11 }
       },
- 
+
       init: function () {
         this.baseY = this.el.object3D.position.y;
         this.time = 0;
- 
+
         this.previousPosition = new THREE.Vector3();
         this.currentPosition = new THREE.Vector3();
- 
+
         this.el.object3D.getWorldPosition(
           this.previousPosition
         );
       },
- 
+
       tick: function (time, deltaTime) {
         if (this.el.sceneEl.is('vr-mode')) {
           return;
         }
- 
+
         this.el.object3D.getWorldPosition(
           this.currentPosition
         );
- 
+
         const deltaX =
           this.currentPosition.x -
           this.previousPosition.x;
- 
+
         const deltaZ =
           this.currentPosition.z -
           this.previousPosition.z;
- 
+
         const distance = Math.sqrt(
           (deltaX * deltaX) +
           (deltaZ * deltaZ)
         );
- 
+
         if (
           distance > 0.001 &&
           distance < 0.5
@@ -453,7 +414,7 @@
             deltaTime *
             0.001 *
             this.data.speed;
- 
+
           this.el.object3D.position.y =
             this.baseY +
             Math.sin(this.time) *
@@ -466,326 +427,227 @@
               0.1
             );
         }
- 
+
         this.previousPosition.copy(
           this.currentPosition
         );
       }
     });
- 
- 
+
+
     /* ============================================================
        5. DOOR OPEN / CLOSE
+
+       FIX #1: previously used a continuous per-frame lerp that
+       chases the target angle forever. That asymptotically slows
+       down near the end and is sensitive to frame-rate stutters.
+       Now uses a fixed-duration eased swing (elapsed / duration,
+       not frame-count dependent) so it always finishes in exactly
+       `duration` ms.
+
+       FIX #2 (looks like the whole door rotates instead of one
+       edge staying fixed): the hinge point was auto-guessed from
+       the door's bounding box (assuming the wider horizontal
+       dimension is the door's width). If your door mesh's own
+       local axes don't line up with that guess, the pivot lands
+       in the wrong place and it can look like the door spins
+       around its center instead of swinging on an edge.
+
+       Two ways to fix this now:
+       1. Set axis="x" or axis="z" explicitly (instead of "auto")
+          if you know which world axis the door's width runs
+          along, and hingeSide to pick which end is the hinge.
+       2. Set debug="true" — this drops a small red sphere at the
+          exact point the code thinks the hinge is. Load the scene,
+          look at where that sphere sits relative to the door: if
+          it's not sitting right on the visible hinge edge of your
+          door model, that confirms the auto-guess is wrong and
+          tells you which way to correct axis/hingeSide.
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
         openAngle: { default: 45 },
- 
         hingeSide: {
           default: 'left',
           oneOf: ['left', 'right']
         },
- 
-        speed: { default: 7 },
- 
-        direction: { default: 1 }
+        axis: {
+          default: 'auto',
+          oneOf: ['auto', 'x', 'z']
+        },
+        duration: { default: 600 },
+        debug: { default: false }
       },
- 
+
       init: function () {
         this.isOpen = false;
+        this.startAngle = 0;
         this.currentAngle = 0;
         this.targetAngle = 0;
+        this.animStartTime = 0;
         this.pivot = null;
         this.lastActivation = 0;
- 
+
         this.activate =
           this.activate.bind(this);
- 
+
         this.el.addEventListener(
           'model-loaded',
-          () => this.createRealHinge()
+          () => this.createHinge()
         );
- 
-        this.el.addEventListener(
-          'activate-object',
-          this.activate
-        );
- 
+
         this.el.addEventListener(
           'click',
           this.activate
         );
- 
+
         this.el.addEventListener(
           'vr-activate',
           this.activate
         );
       },
- 
-      getLocalBoundingBox: function (model) {
-        const localBox = new THREE.Box3();
-        localBox.makeEmpty();
- 
-        this.el.object3D.updateMatrixWorld(true);
-        model.updateMatrixWorld(true);
- 
-        const inverseEntityWorld =
-          new THREE.Matrix4()
-            .copy(this.el.object3D.matrixWorld)
-            .invert();
- 
-        model.traverse((node) => {
-          if (!node.isMesh || !node.geometry) {
-            return;
-          }
- 
-          if (!node.geometry.boundingBox) {
-            node.geometry.computeBoundingBox();
-          }
- 
-          if (!node.geometry.boundingBox) {
-            return;
-          }
- 
-          const nodeToEntity =
-            new THREE.Matrix4().multiplyMatrices(
-              inverseEntityWorld,
-              node.matrixWorld
-            );
- 
-          const nodeBox =
-            node.geometry.boundingBox
-              .clone()
-              .applyMatrix4(nodeToEntity);
- 
-          localBox.union(nodeBox);
-        });
- 
-        return localBox;
-      },
- 
-      createRealHinge: function () {
+
+      createHinge: function () {
         const model =
           this.el.getObject3D('mesh');
- 
+
         if (!model || this.pivot) {
           return;
         }
- 
+
         this.el.object3D.updateMatrixWorld(true);
         model.updateMatrixWorld(true);
- 
+
         const box =
-          this.getLocalBoundingBox(model);
- 
+          new THREE.Box3().setFromObject(model);
+
         if (box.isEmpty()) {
           return;
         }
- 
+
         const size = new THREE.Vector3();
         const center = new THREE.Vector3();
- 
+
         box.getSize(size);
         box.getCenter(center);
- 
-        const widthRunsAlongX =
-          size.x >= size.z;
- 
-        const hingePosition =
+
+        const useXAxis =
+          this.data.axis === 'auto'
+            ? size.x >= size.z
+            : this.data.axis === 'x';
+
+        const hingeWorld =
           center.clone();
- 
-        if (widthRunsAlongX) {
-          hingePosition.x =
+
+        if (useXAxis) {
+          hingeWorld.x =
             this.data.hingeSide === 'left'
               ? box.min.x
               : box.max.x;
         } else {
-          hingePosition.z =
+          hingeWorld.z =
             this.data.hingeSide === 'left'
               ? box.min.z
               : box.max.z;
         }
- 
+
+        const hingeLocal =
+          this.el.object3D.worldToLocal(
+            hingeWorld.clone()
+          );
+
         const pivot =
           new THREE.Group();
- 
-        pivot.name =
-          'real-door-edge-hinge';
- 
-        pivot.position.copy(
-          hingePosition
-        );
- 
-        model.updateMatrix();
- 
-        const oldLocalMatrix =
-          model.matrix.clone();
- 
+
+        pivot.name = 'automatic-door-hinge';
+        pivot.position.copy(hingeLocal);
+
         this.el.object3D.add(pivot);
-        this.el.object3D.remove(model);
-        pivot.add(model);
- 
-        const inversePivotMatrix =
-          new THREE.Matrix4().makeTranslation(
-            -hingePosition.x,
-            -hingePosition.y,
-            -hingePosition.z
-          );
- 
-        const modelInsidePivot =
-          new THREE.Matrix4().multiplyMatrices(
-            inversePivotMatrix,
-            oldLocalMatrix
-          );
- 
-        modelInsidePivot.decompose(
-          model.position,
-          model.quaternion,
-          model.scale
-        );
- 
-        model.updateMatrix();
-        model.updateMatrixWorld(true);
- 
+
+        pivot.attach(model);
+
         this.pivot = pivot;
- 
+
+        if (this.data.debug) {
+          const marker = document.createElement('a-sphere');
+          marker.setAttribute('radius', '0.04');
+          marker.setAttribute('color', '#ff2222');
+          marker.setAttribute('position', `${hingeWorld.x} ${hingeWorld.y} ${hingeWorld.z}`);
+          this.el.sceneEl.appendChild(marker);
+          console.log('Door hinge marker placed at world position:', hingeWorld);
+        }
+
         console.log(
-          'Real door hinge created:',
+          'Door hinge created on',
           this.data.hingeSide,
-          'edge stays fixed.'
+          'side, axis:', useXAxis ? 'x' : 'z'
         );
       },
- 
-      activate: function (event) {
-        if (
-          event &&
-          event.target !== this.el &&
-          event.type !== 'activate-object'
-        ) {
+
+      easeInOutQuad: function (t) {
+        return t < 0.5
+          ? 2 * t * t
+          : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      },
+
+      activate: function () {
+        const now = performance.now();
+
+        if (now - this.lastActivation < 250) {
           return;
         }
- 
-        const now =
-          performance.now();
- 
-        if (
-          now - this.lastActivation <
-          250
-        ) {
-          return;
-        }
- 
+
         this.lastActivation = now;
         this.isOpen = !this.isOpen;
- 
-        const degrees =
-          this.isOpen
-            ? this.data.openAngle *
-              this.data.direction
-            : 0;
- 
+
+        this.startAngle = this.currentAngle;
+        this.animStartTime = now;
+
         this.targetAngle =
           THREE.MathUtils.degToRad(
-            degrees
+            this.isOpen
+              ? this.data.openAngle
+              : 0
           );
       },
- 
-      tick: function (time, deltaTime) {
-        if (
-          !this.pivot ||
-          !deltaTime
-        ) {
+
+      tick: function () {
+        if (!this.pivot) {
           return;
         }
- 
-        const amount =
-          Math.min(
-            1,
-            (deltaTime / 1000) *
-            this.data.speed
-          );
- 
+
+        const elapsed = performance.now() - this.animStartTime;
+        const t = Math.min(1, elapsed / this.data.duration);
+        const eased = this.easeInOutQuad(t);
+
         this.currentAngle =
           THREE.MathUtils.lerp(
-            this.currentAngle,
+            this.startAngle,
             this.targetAngle,
-            amount
+            eased
           );
- 
+
         this.pivot.rotation.y =
           this.currentAngle;
       }
     });
- 
- 
-    /* ============================================================
-       INTERACTION PROXY
-    ============================================================ */
-    AFRAME.registerComponent('interaction-proxy', {
-      schema: {
-        owner: { type: 'selector' }
-      },
- 
-      init: function () {
-        const forward = (event) => {
-          if (event && event.stopPropagation) {
-            event.stopPropagation();
-          }
- 
-          if (this.data.owner) {
-            this.data.owner.emit(
-              'activate-object',
-              {},
-              false
-            );
-          }
-        };
- 
-        this.el.addEventListener(
-          'click',
-          forward
-        );
- 
-        this.el.addEventListener(
-          'vr-activate',
-          forward
-        );
-      }
-    });
- 
- 
+
+
     /* ============================================================
        INVISIBLE INTERACTION HITBOX
- 
-       FIX (this was making the door's hover area huge and blocking
-       the teddy): "minimumSize" forces EVERY axis of the hitbox —
-       including a door's thin depth axis — up to at least that
-       value. A door might only be a few centimeters thick, but a
-       minimumSize of 0.3 was inflating that thin axis to 30cm,
-       creating an invisible box sticking out ~15cm on each side of
-       the actual door. The teddy's hitbox was similarly oversized
-       (padding 0.35 + minimum 0.65 against a small object), which
-       could extend far enough to overlap/shadow nearby objects and
-       intercept the ray before it reached the teddy itself.
- 
-       The component logic itself was fine — the configured
-       padding/minimumSize values in the HTML below were just too
-       large relative to each object's real size. Values have been
-       reduced to something proportional per-object.
     ============================================================ */
     AFRAME.registerComponent('easy-target', {
       schema: {
-        padding: { default: 0.08 },
-        minimumSize: { default: 0.25 }
+        padding: { default: 0.08 }
       },
- 
+
       init: function () {
         this.el.addEventListener(
           'model-loaded',
           () => this.createHitbox()
         );
       },
- 
+
       createHitbox: function () {
         if (
           this.el.querySelector(
@@ -794,95 +656,76 @@
         ) {
           return;
         }
- 
+
         const model =
           this.el.getObject3D('mesh');
- 
+
         if (!model) {
           return;
         }
- 
+
         this.el.object3D.updateMatrixWorld(true);
         model.updateMatrixWorld(true);
- 
+
         const box =
           new THREE.Box3().setFromObject(model);
- 
+
         if (box.isEmpty()) {
           return;
         }
- 
+
         const size = new THREE.Vector3();
         const center = new THREE.Vector3();
- 
+
         box.getSize(size);
         box.getCenter(center);
- 
+
         const localCenter =
           this.el.object3D.worldToLocal(
             center.clone()
           );
- 
+
         const padding =
           this.data.padding;
- 
-        const minimum =
-          this.data.minimumSize;
- 
+
         const hitbox =
           document.createElement('a-box');
- 
+
         hitbox.setAttribute(
           'class',
-          'interaction-hitbox interactable'
+          'interaction-hitbox'
         );
- 
+
         hitbox.setAttribute(
           'position',
           `${localCenter.x} ${localCenter.y} ${localCenter.z}`
         );
- 
+
         hitbox.setAttribute(
           'width',
-          Math.max(size.x + padding, minimum)
+          Math.max(size.x + padding, 0.12)
         );
- 
+
         hitbox.setAttribute(
           'height',
-          Math.max(size.y + padding, minimum)
+          Math.max(size.y + padding, 0.12)
         );
- 
+
         hitbox.setAttribute(
           'depth',
-          Math.max(size.z + padding, minimum)
+          Math.max(size.z + padding, 0.12)
         );
- 
+
         hitbox.setAttribute(
           'material',
-          'color: #ffffff; opacity: 0.001; transparent: true; depthWrite: false; side: double'
+          'color: #ffffff; opacity: 0.001; transparent: true; depthWrite: false'
         );
- 
-        hitbox.setAttribute(
-          'interaction-proxy',
-          `owner: #${this.el.id}`
-        );
- 
+
         this.el.appendChild(hitbox);
- 
-        const rightRaycaster =
-          document.querySelector('#rightHand');
- 
-        if (
-          rightRaycaster &&
-          rightRaycaster.components.raycaster &&
-          rightRaycaster.components.raycaster.refreshObjects
-        ) {
-          rightRaycaster.components.raycaster.refreshObjects();
-        }
       }
     });
- 
- 
+
+
     /* ============================================================
        6. GRAB AND DROP TEDDY / HAIRPIN
     ============================================================ */
@@ -890,163 +733,135 @@
       init: function () {
         this.isGrabbed = false;
         this.lastActivation = 0;
-        this.originalParent = null;
- 
+
         this.dropRay =
           new THREE.Raycaster();
- 
+
         this.dropRay.far = 8;
- 
+
         this.activate =
           this.activate.bind(this);
- 
-        this.el.addEventListener(
-          'activate-object',
-          this.activate
-        );
- 
+
         this.el.addEventListener(
           'click',
           this.activate
         );
- 
+
         this.el.addEventListener(
           'vr-activate',
           this.activate
         );
       },
- 
-      activate: function (event) {
-        if (
-          event &&
-          event.target !== this.el &&
-          event.type !== 'activate-object'
-        ) {
-          return;
-        }
- 
+
+      activate: function () {
         const now = performance.now();
- 
+
         if (now - this.lastActivation < 250) {
           return;
         }
- 
+
         this.lastActivation = now;
- 
+
         if (this.isGrabbed) {
           this.drop();
         } else {
           this.grab();
         }
       },
- 
+
       grab: function () {
         const scene =
           this.el.sceneEl;
- 
+
         if (
           scene.heldItem &&
           scene.heldItem !== this
         ) {
           return;
         }
- 
+
         const holder =
           scene.is('vr-mode')
-            ? document.querySelector('#rightHandHold')
-            : document.querySelector('#desktopHold');
- 
+            ? document.querySelector('#rightHand')
+            : document.querySelector('#cam');
+
         if (!holder) {
           console.error(
-            'Cannot pick up the object: hold anchor was not found.'
+            'Cannot grab object: holder was not found.'
           );
           return;
         }
- 
-        this.originalParent =
-          this.el.parentElement;
- 
+
         this.isGrabbed = true;
         scene.heldItem = this;
- 
-        holder.appendChild(this.el);
- 
-        this.el.object3D.position.set(0, 0, 0);
-        this.el.object3D.rotation.set(0, 0, 0);
- 
+
+        holder.object3D.attach(
+          this.el.object3D
+        );
+
+        if (scene.is('vr-mode')) {
+          this.el.object3D.position.set(
+            0,
+            -0.03,
+            -0.28
+          );
+        } else {
+          this.el.object3D.position.set(
+            0,
+            -0.25,
+            -1
+          );
+        }
+
         console.log(
           this.el.id,
           'picked up.'
         );
       },
- 
+
       drop: function () {
         if (!this.isGrabbed) {
           return;
         }
- 
+
         const scene =
           this.el.sceneEl;
- 
+
         const worldPosition =
           new THREE.Vector3();
- 
-        const worldQuaternion =
-          new THREE.Quaternion();
- 
-        const worldScale =
-          new THREE.Vector3();
- 
+
         this.el.object3D.getWorldPosition(
           worldPosition
         );
- 
-        this.el.object3D.getWorldQuaternion(
-          worldQuaternion
+
+        scene.object3D.attach(
+          this.el.object3D
         );
- 
-        this.el.object3D.getWorldScale(
-          worldScale
-        );
- 
-        scene.appendChild(this.el);
- 
-        this.el.object3D.position.copy(
-          worldPosition
-        );
- 
-        this.el.object3D.quaternion.copy(
-          worldQuaternion
-        );
- 
-        this.el.object3D.scale.copy(
-          worldScale
-        );
- 
+
         this.isGrabbed = false;
         scene.heldItem = null;
- 
+
         const roomMeshes = [];
- 
+
         scene
           .querySelectorAll('.roompart')
           .forEach((entity) => {
             const root =
               entity.getObject3D('mesh');
- 
+
             if (!root) {
               return;
             }
- 
+
             root.updateMatrixWorld(true);
- 
+
             root.traverse((node) => {
               if (node.isMesh) {
                 roomMeshes.push(node);
               }
             });
           });
- 
+
         if (roomMeshes.length) {
           this.dropRay.set(
             new THREE.Vector3(
@@ -1054,231 +869,155 @@
               worldPosition.y + 1.5,
               worldPosition.z
             ),
- 
+
             new THREE.Vector3(
               0,
               -1,
               0
             )
           );
- 
+
           const hit =
             this.dropRay.intersectObjects(
               roomMeshes,
               true
             )[0];
- 
+
           if (hit) {
             this.el.object3D.updateMatrixWorld(true);
- 
+
             const objectBox =
               new THREE.Box3().setFromObject(
                 this.el.object3D
               );
- 
+
             const lift =
               hit.point.y -
               objectBox.min.y +
               0.015;
- 
+
             this.el.object3D.position.y +=
               lift;
           }
         }
- 
+
         console.log(
           this.el.id,
           'dropped.'
         );
       }
     });
- 
- 
+
+
     /* ============================================================
-       RIGHT-CONTROLLER INTERACTION
+       RELIABLE RIGHT-CONTROLLER INTERACTION
+
+       FIX: this used to read this.el.components.raycaster.intersectedEls
+       — the raycaster component's own cached hit list, which only
+       refreshes every `interval` ms (50ms) on its own timer. If a
+       trigger press landed in between refreshes, or right after the
+       hand moved, that list could be empty or stale even while
+       visibly pointing at the teddy — causing grabs to silently
+       fail with no error.
+
+       Now useTrigger() does its own fresh raycast at the exact
+       moment the trigger fires, straight from the controller's
+       current world position/direction against the actual meshes
+       of every ".interactable" entity (including their invisible
+       easy-target hitboxes). No dependency on any other
+       component's internal timing.
     ============================================================ */
     AFRAME.registerComponent('vr-interactor', {
       init: function () {
-        this.lastHudUpdate = 0;
- 
+        this.raycaster = new THREE.Raycaster();
+        this.raycaster.far = 6;
+
         this.el.addEventListener(
           'triggerdown',
           () => this.useTrigger()
         );
- 
+
         this.el.addEventListener(
           'gripdown',
           () => this.dropHeldItem()
         );
       },
- 
-      resolveOwner: function (element) {
-        let current = element;
- 
-        while (
-          current &&
-          current !== this.el.sceneEl
-        ) {
-          if (
-            current.components &&
-            (
-              current.components.grabbable ||
-              current.components['door-hinge']
-            )
-          ) {
-            return current;
-          }
- 
-          current = current.parentElement;
-        }
- 
-        return null;
-      },
- 
-      getCandidates: function (raycaster) {
-        const candidates = [];
- 
-        (raycaster.intersectedEls || [])
-          .forEach((element) => {
-            if (!candidates.includes(element)) {
-              candidates.push(element);
-            }
-          });
- 
-        (raycaster.intersections || [])
-          .forEach((intersection) => {
-            const element =
-              intersection.object &&
-              intersection.object.el;
- 
-            if (
-              element &&
-              !candidates.includes(element)
-            ) {
-              candidates.push(element);
-            }
-          });
- 
-        return candidates;
-      },
- 
-      /*
-        Runs every frame and writes a live "what am I currently
-        pointing at" line to the debug HUD, so you can watch it
-        change in real time as you aim the controller — without
-        needing to pull the trigger or open devtools.
-      */
-      tick: function (time) {
-        if (time - this.lastHudUpdate < 150) {
-          return;
-        }
-        this.lastHudUpdate = time;
- 
-        const raycaster = this.el.components.raycaster;
-        if (!raycaster || typeof window.updateDebugHud !== 'function') {
-          return;
-        }
- 
-        const candidates = this.getCandidates(raycaster);
- 
-        if (!candidates.length) {
-          window.updateDebugHud('Pointing at: nothing');
-          return;
-        }
- 
-        const names = candidates.map((el) => el.id || el.className || '(unnamed)');
-        window.updateDebugHud('Pointing at: ' + names.join(', '));
-      },
- 
+
       useTrigger: function () {
         const scene =
           this.el.sceneEl;
- 
+
         if (scene.heldItem) {
           scene.heldItem.drop();
-          if (window.updateDebugHud) {
-            window.updateDebugHud('Trigger: dropped ' + scene.heldItem.el.id);
-          }
           return;
         }
- 
-        const raycaster =
-          this.el.components.raycaster;
- 
-        if (!raycaster) {
-          console.error(
-            'Right-controller raycaster was not found.'
-          );
-          if (window.updateDebugHud) {
-            window.updateDebugHud('ERROR: raycaster component missing on #rightHand');
+
+        const origin = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+
+        this.el.object3D.getWorldPosition(origin);
+        this.el.object3D.getWorldDirection(direction);
+
+        const meshes = [];
+
+        scene.querySelectorAll('.interactable').forEach((entity) => {
+          const tagMesh = (root) => {
+            if (!root) return;
+            root.updateMatrixWorld(true);
+            root.traverse((node) => {
+              if (node.isMesh) {
+                node.userData.__interactableEl = entity;
+                meshes.push(node);
+              }
+            });
+          };
+
+          tagMesh(entity.getObject3D('mesh'));
+
+          const hitboxEl = entity.querySelector('.interaction-hitbox');
+          if (hitboxEl && hitboxEl.object3D) {
+            tagMesh(hitboxEl.object3D);
           }
+        });
+
+        if (!meshes.length) {
           return;
         }
- 
-        if (raycaster.refreshObjects) {
-          raycaster.refreshObjects();
-        }
- 
-        const candidates = this.getCandidates(raycaster);
- 
-        if (!candidates.length) {
-          if (window.updateDebugHud) {
-            window.updateDebugHud('Trigger pressed: 0 candidates hit by raycaster');
-          }
-          console.log(
-            'Right trigger pressed, but no interactive object was targeted.'
-          );
+
+        this.raycaster.set(origin, direction);
+        const hit = this.raycaster.intersectObjects(meshes, true)[0];
+
+        if (!hit) {
           return;
         }
- 
-        for (const candidate of candidates) {
-          const owner =
-            this.resolveOwner(candidate);
- 
-          if (owner) {
-            owner.emit(
-              'activate-object',
-              {},
-              false
-            );
-            if (window.updateDebugHud) {
-              window.updateDebugHud(
-                'Trigger pressed: hit "' + (candidate.id || candidate.className) +
-                '" -> activated owner "' + owner.id + '"'
-              );
-            }
-            return;
-          }
+
+        let node = hit.object;
+        while (node && !node.userData.__interactableEl) {
+          node = node.parent;
         }
- 
-        if (window.updateDebugHud) {
-          window.updateDebugHud(
-            'Trigger pressed: hit ' + candidates.map((c) => c.id || c.className).join(', ') +
-            ' but NONE had a grabbable/door-hinge ancestor'
+
+        const target = node ? node.userData.__interactableEl : null;
+
+        if (target) {
+          target.emit(
+            'vr-activate',
+            {},
+            false
           );
         }
- 
-        console.log(
-          'Right trigger pressed, but no interactive object was targeted.'
-        );
       },
- 
+
       dropHeldItem: function () {
         const heldItem =
           this.el.sceneEl.heldItem;
- 
+
         if (heldItem) {
           heldItem.drop();
         }
       }
     });
- 
- 
-    /* ============================================================
-       8. AUDIO UNLOCK
-    ============================================================ */
- 
- 
+
+
     /* ============================================================
        9. FOOTSTEPS
     ============================================================ */
@@ -1287,21 +1026,21 @@
         minSpeed: { default: 0.02 },
         maxSpeed: { default: 4 }
       },
- 
+
       init: function () {
         this.previousPosition =
           this.el.object3D.position.clone();
- 
+
         this.audio =
           document.querySelector('#footstepAudio');
- 
+
         this.isPlaying = false;
- 
+
         if (this.audio) {
           this.audio.volume = 0.5;
         }
       },
- 
+
       tick: function (time, deltaTime) {
         if (
           !deltaTime ||
@@ -1309,35 +1048,35 @@
         ) {
           return;
         }
- 
+
         const currentPosition =
           this.el.object3D.position;
- 
+
         const deltaX =
           currentPosition.x -
           this.previousPosition.x;
- 
+
         const deltaZ =
           currentPosition.z -
           this.previousPosition.z;
- 
+
         const distance =
           Math.sqrt(
             (deltaX * deltaX) +
             (deltaZ * deltaZ)
           );
- 
+
         const speed =
           distance /
           (deltaTime / 1000);
- 
+
         const isWalking =
           speed >= this.data.minSpeed &&
           speed <= this.data.maxSpeed;
- 
+
         const audioUnlocked =
           this.el.sceneEl.audioUnlocked;
- 
+
         if (
           isWalking &&
           audioUnlocked &&
@@ -1345,7 +1084,7 @@
         ) {
           const playPromise =
             this.audio.play();
- 
+
           if (playPromise) {
             playPromise.catch((error) => {
               console.error(
@@ -1354,7 +1093,7 @@
               );
             });
           }
- 
+
           this.isPlaying = true;
         } else if (
           (!isWalking ||
@@ -1365,40 +1104,40 @@
           this.audio.currentTime = 0;
           this.isPlaying = false;
         }
- 
+
         this.previousPosition.copy(
           currentPosition
         );
       }
     });
   </script>
- 
- 
+
+
   <a-scene
- 
+
     background="
       color: #020202"
- 
+
     fog="
       type: exponential;
       color: #050805;
       density: 0.025"
- 
+
     renderer="
       colorManagement: true;
       physicallyCorrectLights: true"
- 
+
     loading-screen="
       enabled: true;
       dotsColor: white;
       backgroundColor: black"
- 
+
     webxr="
       optionalFeatures:
         local-floor,
         bounded-floor">
- 
- 
+
+
     <!-- ======================================================
          LIGHTS
     ======================================================= -->
@@ -1407,11 +1146,11 @@
       color="#1c261c"
       intensity="0.6">
     </a-light>
- 
- 
+
+
     <a-entity
       position="-3.5 2.6 -1"
- 
+
       light="
         type: point;
         color: #7cb860;
@@ -1419,17 +1158,17 @@
         distance: 12;
         decay: 2;
         castShadow: false"
- 
+
       flicker="
         min: 5.5;
         max: 7.5;
         speed: 0.3">
     </a-entity>
- 
- 
+
+
     <a-entity
       position="2.5 2.6 1.5"
- 
+
       light="
         type: point;
         color: #ffdb59;
@@ -1437,14 +1176,14 @@
         distance: 15;
         decay: 2;
         castShadow: false"
- 
+
       flicker="
         min: 6.5;
         max: 8.5;
         speed: 0.2">
     </a-entity>
- 
- 
+
+
     <!-- ======================================================
          SPLIT ROOM MODELS
     ======================================================= -->
@@ -1456,8 +1195,8 @@
       tag-floors
       model-status="name: Walls and ground">
     </a-entity>
- 
- 
+
+
     <a-entity
       id="living"
       class="roompart"
@@ -1466,8 +1205,8 @@
       tag-floors
       model-status="name: Living room">
     </a-entity>
- 
- 
+
+
     <a-entity
       id="kitchen"
       class="roompart"
@@ -1476,8 +1215,8 @@
       tag-floors
       model-status="name: Kitchen">
     </a-entity>
- 
- 
+
+
     <a-entity
       id="bedroom"
       class="roompart"
@@ -1486,8 +1225,8 @@
       tag-floors
       model-status="name: Bedroom">
     </a-entity>
- 
- 
+
+
     <a-entity
       id="toilet"
       class="roompart"
@@ -1496,8 +1235,8 @@
       tag-floors
       model-status="name: Toilet">
     </a-entity>
- 
- 
+
+
     <a-entity
       id="bantho"
       class="roompart"
@@ -1506,221 +1245,179 @@
       tag-floors
       model-status="name: Ban tho">
     </a-entity>
- 
- 
+
+
     <!-- ======================================================
          FALLBACK TELEPORT FLOOR
     ======================================================= -->
     <a-plane
       id="fallback-teleport-floor"
       class="floor"
- 
+
       position="0 0.01 0"
       rotation="-90 0 0"
- 
+
       width="30"
       height="30"
- 
+
       material="
         opacity: 0;
         transparent: true;
         depthWrite: false">
     </a-plane>
- 
- 
+
+
     <!-- ======================================================
          INTERACTIVE DOOR
- 
-         FIX: minimumSize dropped from 0.3 to 0.06 — just enough to
-         make thin edges easier to hit without inflating the door's
-         thin depth axis into a 30cm-thick invisible slab.
     ======================================================= -->
     <a-entity
       id="door"
       class="door interactable"
- 
+
       gltf-model="url(cua.glb)"
- 
+
       position="0 0 0"
       rotation="0 0 0"
- 
+
       door-hinge="
         openAngle: 45;
         hingeSide: left;
-        direction: 1;
-        speed: 7"
- 
+        axis: auto;
+        duration: 600;
+        debug: true"
+
       easy-target="
-        padding: 0.03;
-        minimumSize: 0.06"
- 
+        padding: 0.06"
+
       model-status="name: Door">
     </a-entity>
- 
- 
+
+
     <!-- ======================================================
          INTERACTIVE TEDDY
- 
-         FIX: padding/minimumSize brought down from 0.35/0.65 to
-         values proportional to a small object, so its hitbox no
-         longer balloons out far enough to overlap the door or other
-         nearby items.
     ======================================================= -->
     <a-entity
       id="teddy"
       class="item interactable"
- 
+
       gltf-model="url(teddy.glb)"
- 
+
       position="1 0.6 -2"
- 
+
       grabbable
- 
+
       easy-target="
-        padding: 0.08;
-        minimumSize: 0.18"
- 
+        padding: 0.12"
+
       model-status="name: Teddy bear"
- 
+
       animation__hoverin="
         property: scale;
         to: 1.1 1.1 1.1;
         startEvents: mouseenter;
         dur: 200"
- 
+
       animation__hoverout="
         property: scale;
         to: 1 1 1;
         startEvents: mouseleave;
         dur: 200">
     </a-entity>
- 
- 
+
+
     <!-- ======================================================
          INTERACTIVE HAIRPIN
- 
-         FIX: same rebalancing — still generous since a hairpin is
-         genuinely tiny and hard to point at, but no longer inflated
-         enough to reach into neighboring objects' space.
     ======================================================= -->
     <a-entity
       id="hairpin"
       class="item interactable"
- 
+
       gltf-model="url(hairpin.glb)"
- 
+
       position="1.5 0.6 -2"
- 
+
       grabbable
- 
+
       easy-target="
-        padding: 0.1;
-        minimumSize: 0.22"
- 
+        padding: 0.16"
+
       model-status="name: Hairpin"
- 
+
       animation__hoverin="
         property: scale;
         to: 1.2 1.2 1.2;
         startEvents: mouseenter;
         dur: 200"
- 
+
       animation__hoverout="
         property: scale;
         to: 1 1 1;
         startEvents: mouseleave;
         dur: 200">
     </a-entity>
- 
- 
+
+
     <!-- ======================================================
          PLAYER RIG
     ======================================================= -->
     <a-entity
       id="rig"
- 
+
       position="1 0 0.5"
- 
+
       movement-controls="
         speed: 0.15;
         controls: gamepad, keyboard, touch;
         fly: false"
- 
- 
+
+
       footstep-player="
         minSpeed: 0.02;
         maxSpeed: 4">
- 
- 
+
+
       <!-- Camera -->
       <a-entity
         id="cam"
- 
+
         camera="
           near: 0.01;
           fov: 60"
- 
+
         position="0 1.6 0"
- 
+
         look-controls
- 
+
         head-bob="
           amount: 0.025;
           speed: 11">
- 
- 
-        <!-- Desktop object-holding point -->
-        <a-entity
-          id="desktopHold"
-          position="0 -0.25 -1">
-        </a-entity>
- 
- 
-        <!-- IN-HEADSET DEBUG PANEL
-             This is what actually shows inside VR (the fixed HTML
-             div does not — WebXR fullscreen only renders the 3D
-             scene, not page overlays). Attached to the camera so
-             it's always readable, showing live raycaster status
-             and trigger-press results. Delete this whole entity
-             once grabbing is confirmed working. -->
-        <a-entity
-          id="debugHudVR"
-          position="0 -0.25 -0.6"
-          text="
-            value: Debug HUD ready.;
-            color: #9fffb0;
-            align: center;
-            width: 1;
-            wrapCount: 28;
-            baseline: center">
-        </a-entity>
- 
- 
+
+
         <!-- Desktop cursor -->
         <a-cursor
           color="#ffffff"
           scale="0.7 0.7 0.7"
- 
+
           cursor="
             rayOrigin: entity;
             fuse: false"
- 
+
           raycaster="
             objects: .interactable;
             far: 6;
             interval: 50">
         </a-cursor>
- 
+
       </a-entity>
- 
- 
+
+
       <!-- Left controller: teleport -->
       <a-entity
         id="leftHand"
- 
+
         hand-controls="
           hand: left"
- 
+
         blink-controls="
           cameraRig: #rig;
           teleportOrigin: #cam;
@@ -1729,23 +1426,24 @@
           snapTurn: false;
           rotateOnTeleport: false">
       </a-entity>
- 
- 
+
+
       <!-- Right controller: interact
-           FIX: laser-controls removed again. It configures its own
-           internal raycaster component, which competes with (and can
-           silently overwrite) the explicit raycaster below that
-           vr-interactor relies on for grabbing/door interaction.
-           hand-controls alone still gives the physical controller
-           model and trigger/grip events; the explicit raycaster +
-           vr-interactor handle all pointing now, with nothing else
-           touching that same component. -->
+           FIX: laser-controls removed. It was setting up its own
+           internal raycaster/cursor system, which fights with (and
+           can overwrite) the explicit raycaster config below that
+           vr-interactor depends on. That conflict is very likely
+           why the teddy/hairpin wouldn't grab. hand-controls still
+           gives us the physical controller model + trigger/grip
+           events; raycaster + vr-interactor handle all pointing and
+           interaction now, with nothing else touching the same
+           raycaster component. -->
       <a-entity
         id="rightHand"
- 
+
         hand-controls="
           hand: right"
- 
+
         raycaster="
           objects: .interactable;
           far: 6;
@@ -1753,19 +1451,12 @@
           showLine: true;
           lineColor: #ffffff;
           lineOpacity: 0.8"
- 
+
         vr-interactor>
- 
-        <!-- VR object-holding point -->
-        <a-entity
-          id="rightHandHold"
-          position="0 -0.03 -0.28">
-        </a-entity>
- 
       </a-entity>
- 
+
     </a-entity>
- 
+
   </a-scene>
 </body>
 </html>
