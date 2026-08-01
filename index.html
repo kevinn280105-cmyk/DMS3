@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Stable Quest Version + Fixed Interactions</title>
+  <title>VR Room - 45 Degree Door + Reliable Teddy Pickup</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -113,6 +113,10 @@
   <script>
     /* ============================================================
        RELIABLE SOUND BUTTON
+
+       The button updates immediately, before any audio loading.
+       All play() calls begin during the same real button click,
+       which is important because browsers block automatic sound.
     ============================================================ */
     async function enableSound() {
       const button =
@@ -246,6 +250,8 @@
 
     /* ============================================================
        2. MODEL LOAD STATUS
+
+       Open the browser Console to see which GLB loaded or failed.
     ============================================================ */
     AFRAME.registerComponent('model-status', {
       schema: {
@@ -271,6 +277,9 @@
 
     /* ============================================================
        3. CREATE TELEPORT FLOORS FROM NAMED BLENDER OBJECTS
+
+       A permanent fallback floor is also included in the HTML,
+       so teleport still works when the Blender names do not match.
     ============================================================ */
     AFRAME.registerComponent('tag-floors', {
       schema: {
@@ -365,6 +374,9 @@
 
     /* ============================================================
        4. DESKTOP HEAD BOB
+
+       Disabled in immersive VR to avoid conflicting with real
+       headset tracking.
     ============================================================ */
     AFRAME.registerComponent('head-bob', {
       schema: {
@@ -437,32 +449,6 @@
 
     /* ============================================================
        5. DOOR OPEN / CLOSE
-
-       FIX #1: previously used a continuous per-frame lerp that
-       chases the target angle forever. That asymptotically slows
-       down near the end and is sensitive to frame-rate stutters.
-       Now uses a fixed-duration eased swing (elapsed / duration,
-       not frame-count dependent) so it always finishes in exactly
-       `duration` ms.
-
-       FIX #2 (looks like the whole door rotates instead of one
-       edge staying fixed): the hinge point was auto-guessed from
-       the door's bounding box (assuming the wider horizontal
-       dimension is the door's width). If your door mesh's own
-       local axes don't line up with that guess, the pivot lands
-       in the wrong place and it can look like the door spins
-       around its center instead of swinging on an edge.
-
-       Two ways to fix this now:
-       1. Set axis="x" or axis="z" explicitly (instead of "auto")
-          if you know which world axis the door's width runs
-          along, and hingeSide to pick which end is the hinge.
-       2. Set debug="true" — this drops a small red sphere at the
-          exact point the code thinks the hinge is. Load the scene,
-          look at where that sphere sits relative to the door: if
-          it's not sitting right on the visible hinge edge of your
-          door model, that confirms the auto-guess is wrong and
-          tells you which way to correct axis/hingeSide.
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
@@ -471,20 +457,13 @@
           default: 'left',
           oneOf: ['left', 'right']
         },
-        axis: {
-          default: 'auto',
-          oneOf: ['auto', 'x', 'z']
-        },
-        duration: { default: 600 },
-        debug: { default: false }
+        speed: { default: 7 }
       },
 
       init: function () {
         this.isOpen = false;
-        this.startAngle = 0;
         this.currentAngle = 0;
         this.targetAngle = 0;
-        this.animStartTime = 0;
         this.pivot = null;
         this.lastActivation = 0;
 
@@ -494,6 +473,11 @@
         this.el.addEventListener(
           'model-loaded',
           () => this.createHinge()
+        );
+
+        this.el.addEventListener(
+          'activate-object',
+          this.activate
         );
 
         this.el.addEventListener(
@@ -507,6 +491,48 @@
         );
       },
 
+      getLocalBoundingBox: function (model) {
+        const localBox = new THREE.Box3();
+        localBox.makeEmpty();
+
+        this.el.object3D.updateMatrixWorld(true);
+        model.updateMatrixWorld(true);
+
+        const inverseEntityWorld =
+          new THREE.Matrix4().copy(
+            this.el.object3D.matrixWorld
+          ).invert();
+
+        model.traverse((node) => {
+          if (!node.isMesh || !node.geometry) {
+            return;
+          }
+
+          if (!node.geometry.boundingBox) {
+            node.geometry.computeBoundingBox();
+          }
+
+          if (!node.geometry.boundingBox) {
+            return;
+          }
+
+          const nodeToEntity =
+            new THREE.Matrix4().multiplyMatrices(
+              inverseEntityWorld,
+              node.matrixWorld
+            );
+
+          const nodeBox =
+            node.geometry.boundingBox
+              .clone()
+              .applyMatrix4(nodeToEntity);
+
+          localBox.union(nodeBox);
+        });
+
+        return localBox;
+      },
+
       createHinge: function () {
         const model =
           this.el.getObject3D('mesh');
@@ -515,11 +541,8 @@
           return;
         }
 
-        this.el.object3D.updateMatrixWorld(true);
-        model.updateMatrixWorld(true);
-
         const box =
-          new THREE.Box3().setFromObject(model);
+          this.getLocalBoundingBox(model);
 
         if (box.isEmpty()) {
           return;
@@ -531,66 +554,65 @@
         box.getSize(size);
         box.getCenter(center);
 
-        const useXAxis =
-          this.data.axis === 'auto'
-            ? size.x >= size.z
-            : this.data.axis === 'x';
+        /*
+          A real door rotates around one vertical edge. The pivot is
+          placed at one end of the door's longest horizontal axis.
+          That hinge edge remains stationary while the opposite side
+          swings through a 45-degree arc.
+        */
+        const widthRunsAlongX =
+          size.x >= size.z;
 
-        const hingeWorld =
+        const hingeLocal =
           center.clone();
 
-        if (useXAxis) {
-          hingeWorld.x =
+        if (widthRunsAlongX) {
+          hingeLocal.x =
             this.data.hingeSide === 'left'
               ? box.min.x
               : box.max.x;
         } else {
-          hingeWorld.z =
+          hingeLocal.z =
             this.data.hingeSide === 'left'
               ? box.min.z
               : box.max.z;
         }
 
-        const hingeLocal =
-          this.el.object3D.worldToLocal(
-            hingeWorld.clone()
-          );
-
-        const pivot =
-          new THREE.Group();
-
-        pivot.name = 'automatic-door-hinge';
+        const pivot = new THREE.Group();
+        pivot.name = 'real-door-hinge';
         pivot.position.copy(hingeLocal);
 
         this.el.object3D.add(pivot);
+        this.el.object3D.updateMatrixWorld(true);
+        pivot.updateMatrixWorld(true);
+        model.updateMatrixWorld(true);
 
+        /*
+          Preserve the door's exact world position when it becomes a
+          child of the hinge. Only the hinge rotates afterward.
+        */
         pivot.attach(model);
 
         this.pivot = pivot;
 
-        if (this.data.debug) {
-          const marker = document.createElement('a-sphere');
-          marker.setAttribute('radius', '0.04');
-          marker.setAttribute('color', '#ff2222');
-          marker.setAttribute('position', `${hingeWorld.x} ${hingeWorld.y} ${hingeWorld.z}`);
-          this.el.sceneEl.appendChild(marker);
-          console.log('Door hinge marker placed at world position:', hingeWorld);
-        }
-
         console.log(
-          'Door hinge created on',
+          'Door hinge ready:',
           this.data.hingeSide,
-          'side, axis:', useXAxis ? 'x' : 'z'
+          'side,',
+          this.data.openAngle,
+          'degrees.'
         );
       },
 
-      easeInOutQuad: function (t) {
-        return t < 0.5
-          ? 2 * t * t
-          : 1 - Math.pow(-2 * t + 2, 2) / 2;
-      },
+      activate: function (event) {
+        if (
+          event &&
+          event.target !== this.el &&
+          event.type !== 'activate-object'
+        ) {
+          return;
+        }
 
-      activate: function () {
         const now = performance.now();
 
         if (now - this.lastActivation < 250) {
@@ -600,9 +622,6 @@
         this.lastActivation = now;
         this.isOpen = !this.isOpen;
 
-        this.startAngle = this.currentAngle;
-        this.animStartTime = now;
-
         this.targetAngle =
           THREE.MathUtils.degToRad(
             this.isOpen
@@ -611,20 +630,23 @@
           );
       },
 
-      tick: function () {
-        if (!this.pivot) {
+      tick: function (time, deltaTime) {
+        if (!this.pivot || !deltaTime) {
           return;
         }
 
-        const elapsed = performance.now() - this.animStartTime;
-        const t = Math.min(1, elapsed / this.data.duration);
-        const eased = this.easeInOutQuad(t);
+        const amount =
+          Math.min(
+            1,
+            (deltaTime / 1000) *
+            this.data.speed
+          );
 
         this.currentAngle =
           THREE.MathUtils.lerp(
-            this.startAngle,
+            this.currentAngle,
             this.targetAngle,
-            eased
+            amount
           );
 
         this.pivot.rotation.y =
@@ -634,11 +656,52 @@
 
 
     /* ============================================================
+       INTERACTION PROXY
+
+       The invisible hitbox forwards interaction to its parent item.
+    ============================================================ */
+    AFRAME.registerComponent('interaction-proxy', {
+      schema: {
+        owner: { type: 'selector' }
+      },
+
+      init: function () {
+        const forward = (event) => {
+          if (event && event.stopPropagation) {
+            event.stopPropagation();
+          }
+
+          if (this.data.owner) {
+            this.data.owner.emit(
+              'activate-object',
+              {},
+              false
+            );
+          }
+        };
+
+        this.el.addEventListener(
+          'click',
+          forward
+        );
+
+        this.el.addEventListener(
+          'vr-activate',
+          forward
+        );
+      }
+    });
+
+
+    /* ============================================================
        INVISIBLE INTERACTION HITBOX
+
+       The hitbox itself is included in the controller raycaster.
     ============================================================ */
     AFRAME.registerComponent('easy-target', {
       schema: {
-        padding: { default: 0.08 }
+        padding: { default: 0.08 },
+        minimumSize: { default: 0.25 }
       },
 
       init: function () {
@@ -688,12 +751,15 @@
         const padding =
           this.data.padding;
 
+        const minimum =
+          this.data.minimumSize;
+
         const hitbox =
           document.createElement('a-box');
 
         hitbox.setAttribute(
           'class',
-          'interaction-hitbox'
+          'interaction-hitbox interactable'
         );
 
         hitbox.setAttribute(
@@ -703,36 +769,61 @@
 
         hitbox.setAttribute(
           'width',
-          Math.max(size.x + padding, 0.12)
+          Math.max(size.x + padding, minimum)
         );
 
         hitbox.setAttribute(
           'height',
-          Math.max(size.y + padding, 0.12)
+          Math.max(size.y + padding, minimum)
         );
 
         hitbox.setAttribute(
           'depth',
-          Math.max(size.z + padding, 0.12)
+          Math.max(size.z + padding, minimum)
         );
 
         hitbox.setAttribute(
           'material',
-          'color: #ffffff; opacity: 0.001; transparent: true; depthWrite: false'
+          'color: #ffffff; opacity: 0.001; transparent: true; depthWrite: false; side: double'
+        );
+
+        hitbox.setAttribute(
+          'interaction-proxy',
+          `owner: #${this.el.id}`
         );
 
         this.el.appendChild(hitbox);
+
+        const rightRaycaster =
+          document.querySelector('#rightHand');
+
+        if (
+          rightRaycaster &&
+          rightRaycaster.components.raycaster &&
+          rightRaycaster.components.raycaster.refreshObjects
+        ) {
+          rightRaycaster.components.raycaster.refreshObjects();
+        }
       }
     });
 
 
     /* ============================================================
        6. GRAB AND DROP TEDDY / HAIRPIN
+
+       Desktop:
+       Click an object to pick it up.
+       Click it again to drop it.
+
+       VR:
+       Right trigger picks it up.
+       Right grip button drops the held object.
     ============================================================ */
     AFRAME.registerComponent('grabbable', {
       init: function () {
         this.isGrabbed = false;
         this.lastActivation = 0;
+        this.originalParent = null;
 
         this.dropRay =
           new THREE.Raycaster();
@@ -741,6 +832,11 @@
 
         this.activate =
           this.activate.bind(this);
+
+        this.el.addEventListener(
+          'activate-object',
+          this.activate
+        );
 
         this.el.addEventListener(
           'click',
@@ -753,7 +849,15 @@
         );
       },
 
-      activate: function () {
+      activate: function (event) {
+        if (
+          event &&
+          event.target !== this.el &&
+          event.type !== 'activate-object'
+        ) {
+          return;
+        }
+
         const now = performance.now();
 
         if (now - this.lastActivation < 250) {
@@ -782,36 +886,30 @@
 
         const holder =
           scene.is('vr-mode')
-            ? document.querySelector('#rightHand')
-            : document.querySelector('#cam');
+            ? document.querySelector('#rightHandHold')
+            : document.querySelector('#desktopHold');
 
         if (!holder) {
           console.error(
-            'Cannot grab object: holder was not found.'
+            'Cannot pick up the object: hold anchor was not found.'
           );
           return;
         }
 
+        this.originalParent =
+          this.el.parentElement;
+
         this.isGrabbed = true;
         scene.heldItem = this;
 
-        holder.object3D.attach(
-          this.el.object3D
-        );
+        /*
+          Reparent through the A-Frame DOM rather than only changing
+          Three.js parents. This keeps A-Frame and Three.js in sync.
+        */
+        holder.appendChild(this.el);
 
-        if (scene.is('vr-mode')) {
-          this.el.object3D.position.set(
-            0,
-            -0.03,
-            -0.28
-          );
-        } else {
-          this.el.object3D.position.set(
-            0,
-            -0.25,
-            -1
-          );
-        }
+        this.el.object3D.position.set(0, 0, 0);
+        this.el.object3D.rotation.set(0, 0, 0);
 
         console.log(
           this.el.id,
@@ -830,12 +928,36 @@
         const worldPosition =
           new THREE.Vector3();
 
+        const worldQuaternion =
+          new THREE.Quaternion();
+
+        const worldScale =
+          new THREE.Vector3();
+
         this.el.object3D.getWorldPosition(
           worldPosition
         );
 
-        scene.object3D.attach(
-          this.el.object3D
+        this.el.object3D.getWorldQuaternion(
+          worldQuaternion
+        );
+
+        this.el.object3D.getWorldScale(
+          worldScale
+        );
+
+        scene.appendChild(this.el);
+
+        this.el.object3D.position.copy(
+          worldPosition
+        );
+
+        this.el.object3D.quaternion.copy(
+          worldQuaternion
+        );
+
+        this.el.object3D.scale.copy(
+          worldScale
         );
 
         this.isGrabbed = false;
@@ -910,28 +1032,10 @@
 
 
     /* ============================================================
-       RELIABLE RIGHT-CONTROLLER INTERACTION
-
-       FIX: this used to read this.el.components.raycaster.intersectedEls
-       — the raycaster component's own cached hit list, which only
-       refreshes every `interval` ms (50ms) on its own timer. If a
-       trigger press landed in between refreshes, or right after the
-       hand moved, that list could be empty or stale even while
-       visibly pointing at the teddy — causing grabs to silently
-       fail with no error.
-
-       Now useTrigger() does its own fresh raycast at the exact
-       moment the trigger fires, straight from the controller's
-       current world position/direction against the actual meshes
-       of every ".interactable" entity (including their invisible
-       easy-target hitboxes). No dependency on any other
-       component's internal timing.
+       RIGHT-CONTROLLER INTERACTION
     ============================================================ */
     AFRAME.registerComponent('vr-interactor', {
       init: function () {
-        this.raycaster = new THREE.Raycaster();
-        this.raycaster.far = 6;
-
         this.el.addEventListener(
           'triggerdown',
           () => this.useTrigger()
@@ -943,6 +1047,29 @@
         );
       },
 
+      resolveOwner: function (element) {
+        let current = element;
+
+        while (
+          current &&
+          current !== this.el.sceneEl
+        ) {
+          if (
+            current.components &&
+            (
+              current.components.grabbable ||
+              current.components['door-hinge']
+            )
+          ) {
+            return current;
+          }
+
+          current = current.parentElement;
+        }
+
+        return null;
+      },
+
       useTrigger: function () {
         const scene =
           this.el.sceneEl;
@@ -952,59 +1079,60 @@
           return;
         }
 
-        const origin = new THREE.Vector3();
-        const direction = new THREE.Vector3();
+        const raycaster =
+          this.el.components.raycaster;
 
-        this.el.object3D.getWorldPosition(origin);
-        this.el.object3D.getWorldDirection(direction);
-
-        const meshes = [];
-
-        scene.querySelectorAll('.interactable').forEach((entity) => {
-          const tagMesh = (root) => {
-            if (!root) return;
-            root.updateMatrixWorld(true);
-            root.traverse((node) => {
-              if (node.isMesh) {
-                node.userData.__interactableEl = entity;
-                meshes.push(node);
-              }
-            });
-          };
-
-          tagMesh(entity.getObject3D('mesh'));
-
-          const hitboxEl = entity.querySelector('.interaction-hitbox');
-          if (hitboxEl && hitboxEl.object3D) {
-            tagMesh(hitboxEl.object3D);
-          }
-        });
-
-        if (!meshes.length) {
-          return;
-        }
-
-        this.raycaster.set(origin, direction);
-        const hit = this.raycaster.intersectObjects(meshes, true)[0];
-
-        if (!hit) {
-          return;
-        }
-
-        let node = hit.object;
-        while (node && !node.userData.__interactableEl) {
-          node = node.parent;
-        }
-
-        const target = node ? node.userData.__interactableEl : null;
-
-        if (target) {
-          target.emit(
-            'vr-activate',
-            {},
-            false
+        if (!raycaster) {
+          console.error(
+            'Right-controller raycaster was not found.'
           );
+          return;
         }
+
+        if (raycaster.refreshObjects) {
+          raycaster.refreshObjects();
+        }
+
+        const candidates = [];
+
+        (raycaster.intersectedEls || [])
+          .forEach((element) => {
+            if (!candidates.includes(element)) {
+              candidates.push(element);
+            }
+          });
+
+        (raycaster.intersections || [])
+          .forEach((intersection) => {
+            const element =
+              intersection.object &&
+              intersection.object.el;
+
+            if (
+              element &&
+              !candidates.includes(element)
+            ) {
+              candidates.push(element);
+            }
+          });
+
+        for (const candidate of candidates) {
+          const owner =
+            this.resolveOwner(candidate);
+
+          if (owner) {
+            owner.emit(
+              'activate-object',
+              {},
+              false
+            );
+            return;
+          }
+        }
+
+        console.log(
+          'Right trigger pressed, but no interactive object was targeted.'
+        );
       },
 
       dropHeldItem: function () {
@@ -1019,7 +1147,20 @@
 
 
     /* ============================================================
+       8. AUDIO UNLOCK
+
+       No visible start screen is used.
+       Audio starts after the first click, key press, controller
+       trigger or after entering VR.
+    ============================================================ */
+    /* Native audio button replaces the old audio-unlock component. */
+
+
+    /* ============================================================
        9. FOOTSTEPS
+
+       Attached to the player rig so thumbstick and keyboard
+       movement can trigger the footsteps.
     ============================================================ */
     AFRAME.registerComponent('footstep-player', {
       schema: {
@@ -1140,6 +1281,8 @@
 
     <!-- ======================================================
          LIGHTS
+
+         Shadows are disabled for better Quest performance.
     ======================================================= -->
     <a-light
       type="ambient"
@@ -1186,6 +1329,8 @@
 
     <!-- ======================================================
          SPLIT ROOM MODELS
+
+         Each model loads independently.
     ======================================================= -->
     <a-entity
       id="wallandground"
@@ -1249,6 +1394,8 @@
 
     <!-- ======================================================
          FALLBACK TELEPORT FLOOR
+
+         Change Y=0.01 if your real floor is at another height.
     ======================================================= -->
     <a-plane
       id="fallback-teleport-floor"
@@ -1267,6 +1414,12 @@
     </a-plane>
 
 
+    <!--
+         Room ambience is played by the native audio elements
+         near the top of the page.
+    -->
+
+
     <!-- ======================================================
          INTERACTIVE DOOR
     ======================================================= -->
@@ -1282,12 +1435,11 @@
       door-hinge="
         openAngle: 45;
         hingeSide: left;
-        axis: auto;
-        duration: 600;
-        debug: true"
+        speed: 7"
 
       easy-target="
-        padding: 0.06"
+        padding: 0.08;
+        minimumSize: 0.3"
 
       model-status="name: Door">
     </a-entity>
@@ -1307,7 +1459,8 @@
       grabbable
 
       easy-target="
-        padding: 0.12"
+        padding: 0.35;
+        minimumSize: 0.65"
 
       model-status="name: Teddy bear"
 
@@ -1339,7 +1492,8 @@
       grabbable
 
       easy-target="
-        padding: 0.16"
+        padding: 0.25;
+        minimumSize: 0.4"
 
       model-status="name: Hairpin"
 
@@ -1359,6 +1513,13 @@
 
     <!-- ======================================================
          PLAYER RIG
+
+         Stability change:
+         movement-controls is on the rig, not the camera.
+
+         Collision calculations are temporarily disabled because
+         they were the likely cause of Quest freezing. This means
+         the player can currently move through walls.
     ======================================================= -->
     <a-entity
       id="rig"
@@ -1391,6 +1552,13 @@
         head-bob="
           amount: 0.025;
           speed: 11">
+
+
+        <!-- Desktop object-holding point -->
+        <a-entity
+          id="desktopHold"
+          position="0 -0.25 -1">
+        </a-entity>
 
 
         <!-- Desktop cursor -->
@@ -1428,31 +1596,31 @@
       </a-entity>
 
 
-      <!-- Right controller: interact
-           FIX: laser-controls removed. It was setting up its own
-           internal raycaster/cursor system, which fights with (and
-           can overwrite) the explicit raycaster config below that
-           vr-interactor depends on. That conflict is very likely
-           why the teddy/hairpin wouldn't grab. hand-controls still
-           gives us the physical controller model + trigger/grip
-           events; raycaster + vr-interactor handle all pointing and
-           interaction now, with nothing else touching the same
-           raycaster component. -->
+      <!-- Right controller: interact -->
       <a-entity
         id="rightHand"
 
         hand-controls="
           hand: right"
 
+        laser-controls="
+          hand: right"
+
         raycaster="
           objects: .interactable;
           far: 6;
           interval: 50;
-          showLine: true;
           lineColor: #ffffff;
           lineOpacity: 0.8"
 
         vr-interactor>
+
+        <!-- VR object-holding point -->
+        <a-entity
+          id="rightHandHold"
+          position="0 -0.03 -0.28">
+        </a-entity>
+
       </a-entity>
 
     </a-entity>
