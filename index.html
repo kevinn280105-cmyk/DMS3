@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Stable Quest Version + Reliable Sound</title>
+  <title>VR Room - 45 Degree Door + Reliable Teddy Pickup</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -450,48 +450,430 @@
     /* ============================================================
        5. DOOR OPEN / CLOSE
     ============================================================ */
-    AFRAME.registerComponent('door-interact', {
+    AFRAME.registerComponent('door-hinge', {
       schema: {
-        openAngle: { default: 90 }
+        openAngle: { default: 45 },
+
+        hingeSide: {
+          default: 'left',
+          oneOf: ['left', 'right']
+        },
+
+        speed: { default: 7 },
+
+        /*
+          Use -1 instead of 1 when the door must swing in the
+          opposite direction.
+        */
+        direction: { default: 1 }
       },
 
       init: function () {
         this.isOpen = false;
+        this.currentAngle = 0;
+        this.targetAngle = 0;
+        this.pivot = null;
+        this.lastActivation = 0;
 
-        const rotation =
-          this.el.getAttribute('rotation') ||
-          { x: 0, y: 0, z: 0 };
+        this.activate =
+          this.activate.bind(this);
 
-        this.baseRotation = {
-          x: rotation.x,
-          y: rotation.y,
-          z: rotation.z
+        this.el.addEventListener(
+          'model-loaded',
+          () => this.createRealHinge()
+        );
+
+        /*
+          VR uses only one custom activation event. This prevents
+          one trigger press from also producing a second click.
+        */
+        this.el.addEventListener(
+          'activate-object',
+          this.activate
+        );
+
+        /*
+          Desktop still uses a normal mouse click.
+        */
+        this.el.addEventListener(
+          'click',
+          (event) => {
+            if (this.el.sceneEl.is('vr-mode')) {
+              return;
+            }
+
+            if (event && event.stopPropagation) {
+              event.stopPropagation();
+            }
+
+            this.activate();
+          }
+        );
+      },
+
+      getLocalBoundingBox: function (model) {
+        const localBox = new THREE.Box3();
+        localBox.makeEmpty();
+
+        this.el.object3D.updateMatrixWorld(true);
+        model.updateMatrixWorld(true);
+
+        const inverseEntityWorld =
+          new THREE.Matrix4()
+            .copy(this.el.object3D.matrixWorld)
+            .invert();
+
+        model.traverse((node) => {
+          if (!node.isMesh || !node.geometry) {
+            return;
+          }
+
+          if (!node.geometry.boundingBox) {
+            node.geometry.computeBoundingBox();
+          }
+
+          if (!node.geometry.boundingBox) {
+            return;
+          }
+
+          const nodeToEntity =
+            new THREE.Matrix4().multiplyMatrices(
+              inverseEntityWorld,
+              node.matrixWorld
+            );
+
+          const nodeBox =
+            node.geometry.boundingBox
+              .clone()
+              .applyMatrix4(nodeToEntity);
+
+          localBox.union(nodeBox);
+        });
+
+        return localBox;
+      },
+
+      createRealHinge: function () {
+        const model =
+          this.el.getObject3D('mesh');
+
+        if (!model || this.pivot) {
+          return;
+        }
+
+        this.el.object3D.updateMatrixWorld(true);
+        model.updateMatrixWorld(true);
+
+        const box =
+          this.getLocalBoundingBox(model);
+
+        if (box.isEmpty()) {
+          return;
+        }
+
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+
+        box.getSize(size);
+        box.getCenter(center);
+
+        /*
+          The door's width is whichever horizontal dimension is
+          longer. Its thickness is the shorter horizontal dimension.
+        */
+        const widthRunsAlongX =
+          size.x >= size.z;
+
+        /*
+          Put the hinge on one complete vertical edge of the door.
+          That edge remains fixed while the opposite edge swings.
+        */
+        const hingePosition =
+          center.clone();
+
+        if (widthRunsAlongX) {
+          hingePosition.x =
+            this.data.hingeSide === 'left'
+              ? box.min.x
+              : box.max.x;
+        } else {
+          hingePosition.z =
+            this.data.hingeSide === 'left'
+              ? box.min.z
+              : box.max.z;
+        }
+
+        const pivot =
+          new THREE.Group();
+
+        pivot.name =
+          'real-door-edge-hinge';
+
+        pivot.position.copy(
+          hingePosition
+        );
+
+        /*
+          Save the door model's current local transformation before
+          moving it underneath the hinge pivot.
+        */
+        model.updateMatrix();
+
+        const oldLocalMatrix =
+          model.matrix.clone();
+
+        this.el.object3D.add(pivot);
+        this.el.object3D.remove(model);
+        pivot.add(model);
+
+        /*
+          Convert the old entity-local transform into hinge-local
+          space. This keeps the closed door exactly where it was,
+          but makes the hinge edge the new rotation origin.
+        */
+        const inversePivotMatrix =
+          new THREE.Matrix4().makeTranslation(
+            -hingePosition.x,
+            -hingePosition.y,
+            -hingePosition.z
+          );
+
+        const modelInsidePivot =
+          new THREE.Matrix4().multiplyMatrices(
+            inversePivotMatrix,
+            oldLocalMatrix
+          );
+
+        modelInsidePivot.decompose(
+          model.position,
+          model.quaternion,
+          model.scale
+        );
+
+        model.updateMatrix();
+        model.updateMatrixWorld(true);
+
+        this.pivot = pivot;
+
+        console.log(
+          'Real door hinge created:',
+          this.data.hingeSide,
+          'edge stays fixed.'
+        );
+      },
+
+      activate: function () {
+        const now =
+          performance.now();
+
+        if (
+          now - this.lastActivation <
+          450
+        ) {
+          return;
+        }
+
+        this.lastActivation = now;
+        this.isOpen = !this.isOpen;
+
+        const degrees =
+          this.isOpen
+            ? this.data.openAngle *
+              this.data.direction
+            : 0;
+
+        this.targetAngle =
+          THREE.MathUtils.degToRad(
+            degrees
+          );
+
+        console.log(
+          this.isOpen
+            ? 'Door opening.'
+            : 'Door closing.'
+        );
+      },
+
+      tick: function (time, deltaTime) {
+        if (
+          !this.pivot ||
+          !deltaTime
+        ) {
+          return;
+        }
+
+        const amount =
+          Math.min(
+            1,
+            (deltaTime / 1000) *
+            this.data.speed
+          );
+
+        this.currentAngle =
+          THREE.MathUtils.lerp(
+            this.currentAngle,
+            this.targetAngle,
+            amount
+          );
+
+        /*
+          Rotate the hinge pivot, not the center of the door.
+        */
+        this.pivot.rotation.y =
+          this.currentAngle;
+      }
+    });
+
+
+    /* ============================================================
+       INTERACTION PROXY
+
+       The invisible hitbox forwards interaction to its parent item.
+    ============================================================ */
+    AFRAME.registerComponent('interaction-proxy', {
+      schema: {
+        owner: { type: 'selector' }
+      },
+
+      init: function () {
+        const forward = (event) => {
+          if (event && event.stopPropagation) {
+            event.stopPropagation();
+          }
+
+          if (this.data.owner) {
+            this.data.owner.emit(
+              'activate-object',
+              {},
+              false
+            );
+          }
         };
 
-        this.el.addEventListener('click', () => {
-          this.isOpen = !this.isOpen;
+        this.el.addEventListener(
+          'click',
+          forward
+        );
 
-          const targetY =
-            this.isOpen
-              ? this.baseRotation.y +
-                this.data.openAngle
-              : this.baseRotation.y;
+        this.el.addEventListener(
+          'vr-activate',
+          forward
+        );
+      }
+    });
 
-          this.el.setAttribute(
-            'animation__door',
-            {
-              property: 'rotation',
 
-              to:
-                `${this.baseRotation.x} ` +
-                `${targetY} ` +
-                `${this.baseRotation.z}`,
+    /* ============================================================
+       INVISIBLE INTERACTION HITBOX
 
-              dur: 800,
-              easing: 'easeOutQuad'
-            }
+       The hitbox itself is included in the controller raycaster.
+    ============================================================ */
+    AFRAME.registerComponent('easy-target', {
+      schema: {
+        padding: { default: 0.08 },
+        minimumSize: { default: 0.25 }
+      },
+
+      init: function () {
+        this.el.addEventListener(
+          'model-loaded',
+          () => this.createHitbox()
+        );
+      },
+
+      createHitbox: function () {
+        if (
+          this.el.querySelector(
+            '.interaction-hitbox'
+          )
+        ) {
+          return;
+        }
+
+        const model =
+          this.el.getObject3D('mesh');
+
+        if (!model) {
+          return;
+        }
+
+        this.el.object3D.updateMatrixWorld(true);
+        model.updateMatrixWorld(true);
+
+        const box =
+          new THREE.Box3().setFromObject(model);
+
+        if (box.isEmpty()) {
+          return;
+        }
+
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+
+        box.getSize(size);
+        box.getCenter(center);
+
+        const localCenter =
+          this.el.object3D.worldToLocal(
+            center.clone()
           );
-        });
+
+        const padding =
+          this.data.padding;
+
+        const minimum =
+          this.data.minimumSize;
+
+        const hitbox =
+          document.createElement('a-box');
+
+        hitbox.setAttribute(
+          'class',
+          'interaction-hitbox interactable'
+        );
+
+        hitbox.setAttribute(
+          'position',
+          `${localCenter.x} ${localCenter.y} ${localCenter.z}`
+        );
+
+        hitbox.setAttribute(
+          'width',
+          Math.max(size.x + padding, minimum)
+        );
+
+        hitbox.setAttribute(
+          'height',
+          Math.max(size.y + padding, minimum)
+        );
+
+        hitbox.setAttribute(
+          'depth',
+          Math.max(size.z + padding, minimum)
+        );
+
+        hitbox.setAttribute(
+          'material',
+          'color: #ffffff; opacity: 0.001; transparent: true; depthWrite: false; side: double'
+        );
+
+        hitbox.setAttribute(
+          'interaction-proxy',
+          `owner: #${this.el.id}`
+        );
+
+        this.el.appendChild(hitbox);
+
+        const rightRaycaster =
+          document.querySelector('#rightHand');
+
+        if (
+          rightRaycaster &&
+          rightRaycaster.components.raycaster &&
+          rightRaycaster.components.raycaster.refreshObjects
+        ) {
+          rightRaycaster.components.raycaster.refreshObjects();
+        }
       }
     });
 
@@ -507,93 +889,202 @@
        Right trigger picks it up.
        Right grip button drops the held object.
     ============================================================ */
-    AFRAME.registerComponent('grabbable', {
+    AFRAME.registerComponent('natural-grabbable', {
+      schema: {
+        gravity: { default: -9.8 },
+        floorY: { default: 0.015 },
+        throwMultiplier: { default: 1.0 },
+        maxThrowSpeed: { default: 6 }
+      },
+
       init: function () {
-        this.isGrabbed = false;
+        this.heldBy = null;
+        this.velocity = new THREE.Vector3();
+        this.isMoving = false;
+        this.lastSurfaceCheck = 0;
 
-        this.camera =
-          document.querySelector('#cam');
+        this.dropRay = new THREE.Raycaster();
+        this.dropRay.far = 2.5;
 
-        this.rightHand =
-          document.querySelector('#rightHand');
-
-        this.dropRay =
-          new THREE.Raycaster();
-
-        this.dropRay.far = 5;
-
+        /*
+          Desktop fallback:
+          click once to pick up, click again to put down.
+          VR uses grip proximity instead.
+        */
         this.el.addEventListener('click', () => {
-          if (this.isGrabbed) {
-            this.drop();
+          if (this.el.sceneEl.is('vr-mode')) {
+            return;
+          }
+
+          const desktopHold =
+            document.querySelector('#desktopHold');
+
+          if (!desktopHold) {
+            return;
+          }
+
+          if (this.heldBy) {
+            this.release(
+              new THREE.Vector3()
+            );
           } else {
-            this.grab();
+            this.grab(desktopHold);
           }
         });
       },
 
-      grab: function () {
-        const scene = this.el.sceneEl;
+      getWorldBox: function () {
+        const model =
+          this.el.getObject3D('mesh') ||
+          this.el.object3D;
 
-        if (
-          scene.heldItem &&
-          scene.heldItem !== this
-        ) {
-          return;
-        }
+        model.updateMatrixWorld(true);
 
-        const holder =
-          scene.is('vr-mode')
-            ? this.rightHand
-            : this.camera;
-
-        if (!holder) {
-          return;
-        }
-
-        this.isGrabbed = true;
-        scene.heldItem = this;
-
-        holder.object3D.attach(
-          this.el.object3D
+        return new THREE.Box3().setFromObject(
+          model
         );
-
-        if (scene.is('vr-mode')) {
-          this.el.object3D.position.set(
-            0,
-            0,
-            -0.2
-          );
-        } else {
-          this.el.object3D.position.set(
-            0,
-            -0.3,
-            -1
-          );
-        }
       },
 
-      drop: function () {
-        const scene = this.el.sceneEl;
+      distanceToPoint: function (worldPoint) {
+        const box = this.getWorldBox();
 
-        this.isGrabbed = false;
-        scene.heldItem = null;
+        if (box.isEmpty()) {
+          return Infinity;
+        }
 
-        const worldPosition = new THREE.Vector3();
+        const closest =
+          worldPoint.clone().clamp(
+            box.min,
+            box.max
+          );
 
-        this.el.object3D.getWorldPosition(
-          worldPosition
+        return closest.distanceTo(
+          worldPoint
+        );
+      },
+
+      reparentPreserveWorld: function (newParent) {
+        const object =
+          this.el.object3D;
+
+        object.updateMatrixWorld(true);
+
+        const worldMatrix =
+          object.matrixWorld.clone();
+
+        newParent.object3D.updateMatrixWorld(true);
+
+        /*
+          Moving the actual A-Frame element keeps the DOM and
+          Three.js scene graph synchronized.
+        */
+        newParent.appendChild(this.el);
+
+        const inverseParentWorld =
+          new THREE.Matrix4()
+            .copy(newParent.object3D.matrixWorld)
+            .invert();
+
+        const localMatrix =
+          new THREE.Matrix4().multiplyMatrices(
+            inverseParentWorld,
+            worldMatrix
+          );
+
+        localMatrix.decompose(
+          object.position,
+          object.quaternion,
+          object.scale
         );
 
-        scene.object3D.attach(
-          this.el.object3D
+        object.updateMatrix();
+        object.updateMatrixWorld(true);
+      },
+
+      grab: function (handEntity) {
+        if (this.heldBy) {
+          return false;
+        }
+
+        this.isMoving = false;
+        this.velocity.set(0, 0, 0);
+        this.heldBy = handEntity;
+
+        /*
+          Preserve the exact contact offset instead of snapping the
+          object to a fixed point. The object remains where the hand
+          touched it and then follows the hand naturally.
+        */
+        this.reparentPreserveWorld(
+          handEntity
         );
 
-        const roomMeshes = [];
+        this.el.addState('grabbed');
 
-        scene
+        console.log(
+          this.el.id,
+          'grabbed by',
+          handEntity.id
+        );
+
+        return true;
+      },
+
+      release: function (controllerVelocity) {
+        if (!this.heldBy) {
+          return;
+        }
+
+        const scene =
+          this.el.sceneEl;
+
+        this.reparentPreserveWorld(scene);
+
+        this.heldBy = null;
+        this.el.removeState('grabbed');
+
+        this.velocity.copy(
+          controllerVelocity ||
+          new THREE.Vector3()
+        );
+
+        this.velocity.multiplyScalar(
+          this.data.throwMultiplier
+        );
+
+        this.velocity.clampLength(
+          0,
+          this.data.maxThrowSpeed
+        );
+
+        /*
+          A gentle release places the object on the nearby surface.
+          A faster release continues with throwing motion.
+        */
+        if (this.velocity.length() < 0.22) {
+          const settled =
+            this.settleOnNearbySurface(0.45);
+
+          this.isMoving = !settled;
+        } else {
+          this.isMoving = true;
+        }
+
+        console.log(
+          this.el.id,
+          'released at speed',
+          this.velocity.length().toFixed(2)
+        );
+      },
+
+      getRoomMeshes: function () {
+        const meshes = [];
+
+        this.el.sceneEl
           .querySelectorAll('.roompart')
           .forEach((entity) => {
-            const root = entity.getObject3D('mesh');
+            const root =
+              entity.getObject3D('mesh');
 
             if (!root) {
               return;
@@ -603,28 +1094,48 @@
 
             root.traverse((node) => {
               if (node.isMesh) {
-                roomMeshes.push(node);
+                meshes.push(node);
               }
             });
           });
 
+        return meshes;
+      },
+
+      settleOnNearbySurface: function (maximumDistance) {
+        const roomMeshes =
+          this.getRoomMeshes();
+
         if (!roomMeshes.length) {
-          return;
+          return false;
         }
 
-        this.dropRay.set(
-          new THREE.Vector3(
-            worldPosition.x,
-            worldPosition.y + 1.5,
-            worldPosition.z
-          ),
+        const box =
+          this.getWorldBox();
 
+        if (box.isEmpty()) {
+          return false;
+        }
+
+        const center =
+          new THREE.Vector3();
+
+        box.getCenter(center);
+
+        const origin =
           new THREE.Vector3(
-            0,
-            -1,
-            0
-          )
+            center.x,
+            box.min.y + 0.08,
+            center.z
+          );
+
+        this.dropRay.set(
+          origin,
+          new THREE.Vector3(0, -1, 0)
         );
+
+        this.dropRay.far =
+          maximumDistance + 0.08;
 
         const hit =
           this.dropRay.intersectObjects(
@@ -633,42 +1144,362 @@
           )[0];
 
         if (!hit) {
+          return false;
+        }
+
+        const gap =
+          box.min.y - hit.point.y;
+
+        if (
+          gap < -0.03 ||
+          gap > maximumDistance
+        ) {
+          return false;
+        }
+
+        this.el.object3D.position.y +=
+          hit.point.y -
+          box.min.y +
+          0.012;
+
+        this.velocity.set(0, 0, 0);
+        return true;
+      },
+
+      tick: function (time, deltaTime) {
+        if (
+          this.heldBy ||
+          !this.isMoving ||
+          !deltaTime
+        ) {
           return;
         }
 
-        const objectBox =
-          new THREE.Box3().setFromObject(
-            this.el.object3D
+        const dt =
+          Math.min(
+            deltaTime / 1000,
+            0.04
           );
 
-        const objectSize =
-          new THREE.Vector3();
+        this.velocity.y +=
+          this.data.gravity * dt;
 
-        objectBox.getSize(objectSize);
+        this.el.object3D.position.addScaledVector(
+          this.velocity,
+          dt
+        );
 
-        this.el.object3D.position.y =
-          hit.point.y +
-          Math.max(
-            objectSize.y / 2,
-            0.03
-          );
+        /*
+          Mild air resistance keeps extreme throws under control.
+        */
+        const damping =
+          Math.pow(0.985, dt * 60);
+
+        this.velocity.x *= damping;
+        this.velocity.z *= damping;
+
+        this.el.object3D.updateMatrixWorld(true);
+
+        const box =
+          this.getWorldBox();
+
+        if (!box.isEmpty()) {
+          const floorPenetration =
+            this.data.floorY -
+            box.min.y;
+
+          if (floorPenetration > 0) {
+            this.el.object3D.position.y +=
+              floorPenetration;
+
+            if (
+              Math.abs(this.velocity.y) >
+              0.8
+            ) {
+              this.velocity.y *= -0.12;
+              this.velocity.x *= 0.72;
+              this.velocity.z *= 0.72;
+            } else {
+              this.velocity.set(0, 0, 0);
+              this.isMoving = false;
+            }
+          }
+        }
+
+        /*
+          While falling slowly, occasionally check whether a table,
+          bed or other nearby room surface is directly underneath.
+          This runs only for a released moving item, not every room
+          mesh every frame.
+        */
+        if (
+          this.isMoving &&
+          this.velocity.y <= 0 &&
+          time - this.lastSurfaceCheck > 120
+        ) {
+          this.lastSurfaceCheck = time;
+
+          if (
+            this.settleOnNearbySurface(0.12)
+          ) {
+            this.isMoving = false;
+          }
+        }
       }
     });
 
 
     /* ============================================================
-       7. DROP HELD OBJECT WITH RIGHT GRIP BUTTON
-    ============================================================ */
-    AFRAME.registerComponent('drop-held-item', {
-      init: function () {
-        this.el.addEventListener('gripdown', () => {
-          const heldItem =
-            this.el.sceneEl.heldItem;
+       NATURAL VR HAND GRAB
 
-          if (heldItem) {
-            heldItem.drop();
+       Move the controller close to an item.
+       Hold the side grip button to grab it.
+       Keep holding while moving it.
+       Release grip to drop or throw it.
+    ============================================================ */
+    AFRAME.registerComponent('natural-grab-hand', {
+      schema: {
+        radius: { default: 0.24 },
+        velocitySmoothing: { default: 0.35 }
+      },
+
+      init: function () {
+        this.heldItem = null;
+
+        this.previousPosition =
+          new THREE.Vector3();
+
+        this.currentPosition =
+          new THREE.Vector3();
+
+        this.smoothedVelocity =
+          new THREE.Vector3();
+
+        this.instantVelocity =
+          new THREE.Vector3();
+
+        this.hasPreviousPosition = false;
+
+        this.el.addEventListener(
+          'gripdown',
+          () => this.grabNearest()
+        );
+
+        this.el.addEventListener(
+          'gripup',
+          () => this.releaseHeld()
+        );
+
+        this.el.addEventListener(
+          'controllerdisconnected',
+          () => this.releaseHeld()
+        );
+      },
+
+      grabNearest: function () {
+        if (this.heldItem) {
+          return;
+        }
+
+        const handPosition =
+          new THREE.Vector3();
+
+        this.el.object3D.getWorldPosition(
+          handPosition
+        );
+
+        let nearest = null;
+        let nearestDistance =
+          this.data.radius;
+
+        this.el.sceneEl
+          .querySelectorAll(
+            '[natural-grabbable]'
+          )
+          .forEach((entity) => {
+            const component =
+              entity.components[
+                'natural-grabbable'
+              ];
+
+            if (
+              !component ||
+              component.heldBy
+            ) {
+              return;
+            }
+
+            const distance =
+              component.distanceToPoint(
+                handPosition
+              );
+
+            if (distance <= nearestDistance) {
+              nearest = component;
+              nearestDistance = distance;
+            }
+          });
+
+        if (!nearest) {
+          console.log(
+            this.el.id,
+            'grip pressed, but no item was close enough.'
+          );
+          return;
+        }
+
+        if (nearest.grab(this.el)) {
+          this.heldItem = nearest;
+        }
+      },
+
+      releaseHeld: function () {
+        if (!this.heldItem) {
+          return;
+        }
+
+        const released =
+          this.heldItem;
+
+        this.heldItem = null;
+
+        released.release(
+          this.smoothedVelocity.clone()
+        );
+      },
+
+      tick: function (time, deltaTime) {
+        if (!deltaTime) {
+          return;
+        }
+
+        this.el.object3D.getWorldPosition(
+          this.currentPosition
+        );
+
+        if (!this.hasPreviousPosition) {
+          this.previousPosition.copy(
+            this.currentPosition
+          );
+
+          this.hasPreviousPosition = true;
+          return;
+        }
+
+        const seconds =
+          deltaTime / 1000;
+
+        if (seconds <= 0) {
+          return;
+        }
+
+        this.instantVelocity
+          .subVectors(
+            this.currentPosition,
+            this.previousPosition
+          )
+          .divideScalar(seconds);
+
+        this.smoothedVelocity.lerp(
+          this.instantVelocity,
+          this.data.velocitySmoothing
+        );
+
+        this.previousPosition.copy(
+          this.currentPosition
+        );
+      }
+    });
+
+
+    /* ============================================================
+       RIGHT TRIGGER: DOOR ONLY
+
+       Item grabbing is handled by grip proximity, so the trigger
+       remains free for opening and closing the door.
+    ============================================================ */
+    AFRAME.registerComponent('vr-door-interactor', {
+      init: function () {
+        this.triggerHeld = false;
+
+        this.el.addEventListener(
+          'triggerdown',
+          (event) => {
+            if (event && event.stopPropagation) {
+              event.stopPropagation();
+            }
+
+            if (this.triggerHeld) {
+              return;
+            }
+
+            this.triggerHeld = true;
+            this.useDoor();
           }
-        });
+        );
+
+        this.el.addEventListener(
+          'triggerup',
+          () => {
+            this.triggerHeld = false;
+          }
+        );
+      },
+
+      useDoor: function () {
+        const raycaster =
+          this.el.components.raycaster;
+
+        if (!raycaster) {
+          return;
+        }
+
+        if (raycaster.refreshObjects) {
+          raycaster.refreshObjects();
+        }
+
+        const intersections =
+          raycaster.intersections || [];
+
+        let hitElement = null;
+
+        if (
+          intersections.length > 0 &&
+          intersections[0].object
+        ) {
+          hitElement =
+            intersections[0].object.el || null;
+        }
+
+        if (
+          !hitElement &&
+          raycaster.intersectedEls &&
+          raycaster.intersectedEls.length
+        ) {
+          hitElement =
+            raycaster.intersectedEls[0];
+        }
+
+        let current = hitElement;
+
+        while (
+          current &&
+          current !== this.el.sceneEl
+        ) {
+          if (
+            current.components &&
+            current.components['door-hinge']
+          ) {
+            current.emit(
+              'activate-object',
+              {},
+              false
+            );
+            return;
+          }
+
+          current = current.parentElement;
+        }
       }
     });
 
@@ -959,7 +1790,11 @@
       position="0 0 0"
       rotation="0 0 0"
 
-      door-interact
+      door-hinge="
+        openAngle: 45;
+        hingeSide: left;
+        direction: 1;
+        speed: 7"
 
       model-status="name: Door">
     </a-entity>
@@ -976,7 +1811,7 @@
 
       position="1 0.6 -2"
 
-      grabbable
+      natural-grabbable
 
       model-status="name: Teddy bear"
 
@@ -1005,7 +1840,7 @@
 
       position="1.5 0.6 -2"
 
-      grabbable
+      natural-grabbable
 
       model-status="name: Hairpin"
 
@@ -1066,6 +1901,13 @@
           speed: 11">
 
 
+        <!-- Desktop object-holding point -->
+        <a-entity
+          id="desktopHold"
+          position="0 -0.25 -1">
+        </a-entity>
+
+
         <!-- Desktop cursor -->
         <a-cursor
           color="#ffffff"
@@ -1097,7 +1939,11 @@
           collisionEntities: .floor;
           button: trigger;
           snapTurn: false;
-          rotateOnTeleport: false">
+          rotateOnTeleport: false"
+
+        natural-grab-hand="
+          radius: 0.24;
+          velocitySmoothing: 0.35">
       </a-entity>
 
 
@@ -1108,21 +1954,20 @@
         hand-controls="
           hand: right"
 
-        laser-controls="
-          hand: right"
-
-        cursor="
-          rayOrigin: entity;
-          fuse: false"
-
         raycaster="
-          objects: .interactable;
+          objects: .door;
           far: 6;
           interval: 50;
+          showLine: true;
           lineColor: #ffffff;
           lineOpacity: 0.8"
 
-        drop-held-item>
+        natural-grab-hand="
+          radius: 0.24;
+          velocitySmoothing: 0.35"
+
+        vr-door-interactor>
+
       </a-entity>
 
     </a-entity>
