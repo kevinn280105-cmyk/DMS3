@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Easy Door Closing + All GLB Collision</title>
+  <title>VR Room - Clean Friend Fixes + Repeatable Door</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -57,23 +57,6 @@
       cursor: default;
     }
 
-    #debugHud {
-      position: fixed;
-      bottom: 16px;
-      left: 16px;
-      z-index: 1000;
-      max-width: 80vw;
-
-      padding: 8px 12px;
-      border-radius: 6px;
-
-      color: #b6ffb0;
-      background: rgba(0, 0, 0, 0.7);
-
-      font: 500 12px monospace;
-      pointer-events: none;
-      white-space: pre-wrap;
-    }
 
   </style>
 </head>
@@ -83,7 +66,6 @@
   <button id="soundButton" type="button" onclick="enableSound()">
     ENABLE SOUND
   </button>
-  <div id="debugHud"></div>
 
   <!--
     Native browser audio is used here because it is more reliable
@@ -131,22 +113,6 @@
   </audio>
 
   <script>
-    /* ============================================================
-       DEBUG HUD
-       -------------------------------------------------------------
-       natural-grab-hand already calls window.updateDebugHud(...) in
-       several places but no such function existed in this file, so
-       those calls were silently doing nothing. Added it here so you
-       can actually see grab-range / grabbed-item feedback on screen
-       (useful in the headset where there's no console).
-    ============================================================ */
-    window.updateDebugHud = function (text) {
-      const hud = document.querySelector('#debugHud');
-      if (hud) {
-        hud.textContent = text;
-      }
-    };
-
     /* ============================================================
        RELIABLE SOUND BUTTON
 
@@ -913,14 +879,13 @@
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
-        openAngle: { default: 100 },
+        openAngle: { default: 45 },
 
         hingeSide: {
           default: 'left',
           oneOf: ['left', 'right']
         },
 
-        speed: { default: 7 },
         direction: { default: 1 },
         duration: { default: 650 }
       },
@@ -1162,42 +1127,16 @@
         return state;
       },
 
-      activatePart: function (hitObject) {
-        const now =
-          performance.now();
-
-        if (
-          now - this.lastActivation <
-          350
-        ) {
-          return;
-        }
-
-        const part =
-          this.findPartFromHit(hitObject);
-
-        if (!part) {
-          console.warn(
-            'The clicked internal door part could not be identified.'
-          );
-          return;
-        }
-
-        const state =
-          this.createState(part);
-
-        if (!state) {
-          return;
-        }
-
-        this.lastActivation = now;
-        this.lastActiveState = state;
-
-        state.isOpen = !state.isOpen;
-        state.startAngle = state.currentAngle;
+      startDoorAnimation: function (
+        state,
+        shouldOpen
+      ) {
+        state.isOpen = shouldOpen;
+        state.startAngle =
+          state.currentAngle;
 
         const targetDegrees =
-          state.isOpen
+          shouldOpen
             ? this.data.openAngle *
               this.data.direction
             : 0;
@@ -1211,11 +1150,51 @@
         state.isAnimating = true;
       },
 
-      closeLastOpenDoor: function () {
+      activatePart: function (hitObject) {
+        const now =
+          performance.now();
+
+        if (
+          now - this.lastActivation <
+          250
+        ) {
+          return false;
+        }
+
+        const part =
+          this.findPartFromHit(hitObject);
+
+        if (!part) {
+          return false;
+        }
+
+        const state =
+          this.createState(part);
+
+        if (!state) {
+          return false;
+        }
+
+        this.lastActivation = now;
+        this.lastActiveState = state;
+
+        /*
+          Pressing again always reverses the requested state.
+          This also works while the door is still moving.
+        */
+        this.startDoorAnimation(
+          state,
+          !state.isOpen
+        );
+
+        return true;
+      },
+
+      toggleLastDoor: function () {
         const state =
           this.lastActiveState;
 
-        if (!state || !state.isOpen) {
+        if (!state) {
           return false;
         }
 
@@ -1224,20 +1203,21 @@
 
         if (
           now - this.lastActivation <
-          350
+          250
         ) {
           return false;
         }
 
         this.lastActivation = now;
 
-        state.isOpen = false;
-        state.startAngle =
-          state.currentAngle;
-
-        state.targetAngle = 0;
-        state.animationTime = 0;
-        state.isAnimating = true;
+        /*
+          This is the important repeat-use fallback:
+          open -> close -> open -> close, indefinitely.
+        */
+        this.startDoorAnimation(
+          state,
+          !state.isOpen
+        );
 
         return true;
       },
@@ -1632,7 +1612,7 @@
     ============================================================ */
     AFRAME.registerComponent('natural-grab-hand', {
       schema: {
-        radius: { default: 1.0 },
+        radius: { default: 0.4 },
         velocitySmoothing: { default: 0.35 },
         gripThreshold: { default: 0.5 }
       },
@@ -1937,7 +1917,10 @@
         this.el.addEventListener(
           'triggerdown',
           (event) => {
-            if (event && event.stopPropagation) {
+            if (
+              event &&
+              event.stopPropagation
+            ) {
               event.stopPropagation();
             }
 
@@ -1946,7 +1929,7 @@
 
             if (
               now - this.lastTriggerTime <
-              350
+              300
             ) {
               return;
             }
@@ -1968,6 +1951,13 @@
           return;
         }
 
+        const doorComponent =
+          door.components['door-hinge'];
+
+        if (!doorComponent) {
+          return;
+        }
+
         if (raycaster.refreshObjects) {
           raycaster.refreshObjects();
         }
@@ -1977,24 +1967,24 @@
             ? raycaster.getIntersection(door)
             : null;
 
-        if (!intersection) {
-          const doorComponent =
-            door.components['door-hinge'];
-
-          if (doorComponent) {
-            doorComponent.closeLastOpenDoor();
-          }
-
+        /*
+          Use the exact door part when the ray can see it.
+        */
+        if (
+          intersection &&
+          doorComponent.activatePart(
+            intersection.object
+          )
+        ) {
           return;
         }
 
-        door.emit(
-          'activate-object',
-          {
-            object: intersection.object
-          },
-          false
-        );
+        /*
+          After the mesh is moved under its hinge, some Quest/A-Frame
+          combinations stop returning that mesh through getIntersection.
+          The same trigger therefore toggles the last selected door.
+        */
+        doorComponent.toggleLastDoor();
       }
     });
 
@@ -2261,10 +2251,10 @@
       rotation="0 0 0"
 
       door-hinge="
-        openAngle: 100;
+        openAngle: 45;
         hingeSide: left;
         direction: 1;
-        speed: 7"
+        duration: 650"
 
       model-status="name: Door">
     </a-entity>
@@ -2376,7 +2366,7 @@
           near: 0.01;
           fov: 60"
 
-        position="0 1.45 0"
+        position="0 1.6 0"
 
         look-controls
 
@@ -2426,7 +2416,7 @@
           rotateOnTeleport: false"
 
         natural-grab-hand="
-          radius: 1.0;
+          radius: 0.4;
           velocitySmoothing: 0.35">
       </a-entity>
 
@@ -2447,7 +2437,7 @@
           lineOpacity: 0.8"
 
         natural-grab-hand="
-          radius: 1.0;
+          radius: 0.4;
           velocitySmoothing: 0.35"
 
         vr-door-interactor>
