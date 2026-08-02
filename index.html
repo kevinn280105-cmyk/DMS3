@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Clean Friend Fixes + Repeatable Door</title>
+  <title>VR Room - 100 Degree Click Door</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -879,7 +879,7 @@
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
-        openAngle: { default: 45 },
+        openAngle: { default: 100 },
 
         hingeSide: {
           default: 'left',
@@ -896,10 +896,14 @@
         this.partStates = new Map();
         this.lastActivation = 0;
         this.lastActiveState = null;
+        this.pressTarget = null;
 
         this.el.addEventListener(
           'model-loaded',
-          () => this.prepareDoorParts()
+          () => {
+            this.prepareDoorParts();
+            this.createPressTarget();
+          }
         );
 
         this.el.addEventListener(
@@ -915,26 +919,6 @@
           }
         );
 
-        this.el.addEventListener(
-          'click',
-          (event) => {
-            if (this.el.sceneEl.is('vr-mode')) {
-              return;
-            }
-
-            if (event && event.stopPropagation) {
-              event.stopPropagation();
-            }
-
-            const hitObject =
-              event.detail &&
-              event.detail.intersection
-                ? event.detail.intersection.object
-                : null;
-
-            this.activatePart(hitObject);
-          }
-        );
       },
 
       hasMeshDescendant: function (object) {
@@ -988,6 +972,86 @@
 
         console.log(
           `Door model contains ${this.parts.length} selectable part(s).`
+        );
+      },
+
+      createPressTarget: function () {
+        if (this.pressTarget || !this.root) {
+          return;
+        }
+
+        this.root.updateMatrixWorld(true);
+
+        const box =
+          new THREE.Box3().setFromObject(
+            this.root
+          );
+
+        if (box.isEmpty()) {
+          return;
+        }
+
+        const size =
+          new THREE.Vector3();
+
+        const center =
+          new THREE.Vector3();
+
+        box.getSize(size);
+        box.getCenter(center);
+
+        const target =
+          document.createElement('a-box');
+
+        target.setAttribute(
+          'id',
+          'doorPressTarget'
+        );
+
+        target.setAttribute(
+          'class',
+          'door-press-target'
+        );
+
+        target.setAttribute(
+          'position',
+          `${center.x} ${center.y} ${center.z}`
+        );
+
+        target.setAttribute(
+          'width',
+          Math.max(size.x, 0.3)
+        );
+
+        target.setAttribute(
+          'height',
+          Math.max(size.y, 0.5)
+        );
+
+        target.setAttribute(
+          'depth',
+          Math.max(size.z, 0.18)
+        );
+
+        target.setAttribute(
+          'material',
+          'opacity: 0; transparent: true; depthWrite: false; side: double'
+        );
+
+        this.el.sceneEl.appendChild(
+          target
+        );
+
+        this.pressTarget = target;
+      },
+
+      activateDefaultPart: function () {
+        if (!this.parts.length) {
+          return false;
+        }
+
+        return this.activatePart(
+          this.parts[0]
         );
       },
 
@@ -1911,33 +1975,108 @@
        RIGHT TRIGGER: DOOR ONLY
     ============================================================ */
     AFRAME.registerComponent('vr-door-interactor', {
+      schema: {
+        pressThreshold: {
+          default: 0.65
+        },
+
+        releaseThreshold: {
+          default: 0.2
+        }
+      },
+
       init: function () {
+        this.triggerHeld = false;
         this.lastTriggerTime = 0;
 
+        this.pressTrigger =
+          this.pressTrigger.bind(this);
+
+        this.releaseTrigger =
+          this.releaseTrigger.bind(this);
+
+        this.onTriggerChanged =
+          this.onTriggerChanged.bind(this);
+
+        /*
+          Only real trigger input is used.
+          Merely hovering the laser over the door cannot activate it.
+        */
         this.el.addEventListener(
           'triggerdown',
-          (event) => {
-            if (
-              event &&
-              event.stopPropagation
-            ) {
-              event.stopPropagation();
-            }
-
-            const now =
-              performance.now();
-
-            if (
-              now - this.lastTriggerTime <
-              300
-            ) {
-              return;
-            }
-
-            this.lastTriggerTime = now;
-            this.useDoor();
-          }
+          this.pressTrigger
         );
+
+        this.el.addEventListener(
+          'triggerup',
+          this.releaseTrigger
+        );
+
+        this.el.addEventListener(
+          'triggerchanged',
+          this.onTriggerChanged
+        );
+
+        this.el.addEventListener(
+          'controllerdisconnected',
+          this.releaseTrigger
+        );
+      },
+
+      pressTrigger: function (event) {
+        if (this.triggerHeld) {
+          return;
+        }
+
+        if (
+          event &&
+          event.stopPropagation
+        ) {
+          event.stopPropagation();
+        }
+
+        const now =
+          performance.now();
+
+        if (
+          now - this.lastTriggerTime <
+          250
+        ) {
+          return;
+        }
+
+        this.triggerHeld = true;
+        this.lastTriggerTime = now;
+
+        this.useDoor();
+      },
+
+      releaseTrigger: function () {
+        this.triggerHeld = false;
+      },
+
+      onTriggerChanged: function (event) {
+        const value =
+          event &&
+          event.detail &&
+          typeof event.detail.value === 'number'
+            ? event.detail.value
+            : null;
+
+        if (value === null) {
+          return;
+        }
+
+        if (
+          value >= this.data.pressThreshold &&
+          !this.triggerHeld
+        ) {
+          this.pressTrigger();
+        } else if (
+          value <= this.data.releaseThreshold
+        ) {
+          this.releaseTrigger();
+        }
       },
 
       useDoor: function () {
@@ -1946,6 +2085,11 @@
 
         const door =
           document.querySelector('#door');
+
+        const pressTarget =
+          document.querySelector(
+            '#doorPressTarget'
+          );
 
         if (!raycaster || !door) {
           return;
@@ -1962,29 +2106,46 @@
           raycaster.refreshObjects();
         }
 
-        const intersection =
+        const doorIntersection =
           raycaster.getIntersection
             ? raycaster.getIntersection(door)
             : null;
 
+        const targetIntersection =
+          pressTarget &&
+          raycaster.getIntersection
+            ? raycaster.getIntersection(
+                pressTarget
+              )
+            : null;
+
         /*
-          Use the exact door part when the ray can see it.
+          A press does nothing unless the ray is on the visible door
+          or the fixed invisible doorway target.
         */
         if (
-          intersection &&
+          !doorIntersection &&
+          !targetIntersection
+        ) {
+          return;
+        }
+
+        if (
+          doorIntersection &&
           doorComponent.activatePart(
-            intersection.object
+            doorIntersection.object
           )
         ) {
           return;
         }
 
-        /*
-          After the mesh is moved under its hinge, some Quest/A-Frame
-          combinations stop returning that mesh through getIntersection.
-          The same trigger therefore toggles the last selected door.
-        */
-        doorComponent.toggleLastDoor();
+        if (
+          doorComponent.toggleLastDoor()
+        ) {
+          return;
+        }
+
+        doorComponent.activateDefaultPart();
       }
     });
 
@@ -2243,7 +2404,7 @@
     ======================================================= -->
     <a-entity
       id="door"
-      class="door interactable"
+      class="door"
 
       gltf-model="url(cua.glb)"
 
@@ -2251,7 +2412,7 @@
       rotation="0 0 0"
 
       door-hinge="
-        openAngle: 45;
+        openAngle: 100;
         hingeSide: left;
         direction: 1;
         duration: 650"
@@ -2392,7 +2553,7 @@
             fuse: false"
 
           raycaster="
-            objects: .interactable;
+            objects: .item;
             far: 6;
             interval: 50">
         </a-cursor>
@@ -2429,7 +2590,7 @@
           hand: right"
 
         raycaster="
-          objects: #door;
+          objects: #door, .door-press-target;
           far: 6;
           interval: 50;
           showLine: true;
