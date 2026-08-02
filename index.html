@@ -57,6 +57,24 @@
       cursor: default;
     }
 
+    #debugHud {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      z-index: 1000;
+      max-width: 80vw;
+
+      padding: 8px 12px;
+      border-radius: 6px;
+
+      color: #b6ffb0;
+      background: rgba(0, 0, 0, 0.7);
+
+      font: 500 12px monospace;
+      pointer-events: none;
+      white-space: pre-wrap;
+    }
+
   </style>
 </head>
 
@@ -65,6 +83,7 @@
   <button id="soundButton" type="button" onclick="enableSound()">
     ENABLE SOUND
   </button>
+  <div id="debugHud"></div>
 
   <!--
     Native browser audio is used here because it is more reliable
@@ -112,6 +131,22 @@
   </audio>
 
   <script>
+    /* ============================================================
+       DEBUG HUD
+       -------------------------------------------------------------
+       natural-grab-hand already calls window.updateDebugHud(...) in
+       several places but no such function existed in this file, so
+       those calls were silently doing nothing. Added it here so you
+       can actually see grab-range / grabbed-item feedback on screen
+       (useful in the headset where there's no console).
+    ============================================================ */
+    window.updateDebugHud = function (text) {
+      const hud = document.querySelector('#debugHud');
+      if (hud) {
+        hud.textContent = text;
+      }
+    };
+
     /* ============================================================
        RELIABLE SOUND BUTTON
 
@@ -262,6 +297,27 @@
           console.log(
             `${this.data.name} loaded successfully.`
           );
+
+          /*
+            Extra diagnostic: log the loaded model's actual WORLD
+            bounding box, so if an item is invisible again in the
+            future you can immediately see whether its coordinates
+            put it inside the room or far outside it, without having
+            to reason about baked glTF transforms by hand.
+          */
+          const root = this.el.getObject3D('mesh');
+          if (root) {
+            root.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(root);
+            if (!box.isEmpty()) {
+              const center = new THREE.Vector3();
+              box.getCenter(center);
+              console.log(
+                `  -> ${this.data.name} world bounding box center:`,
+                center.toArray().map(n => n.toFixed(2))
+              );
+            }
+          }
         });
 
         this.el.addEventListener('model-error', (event) => {
@@ -442,11 +498,6 @@
 
     /* ============================================================
        5. QUEST-FRIENDLY PLAYER COLLISION
-
-       Prevents thumbstick/keyboard movement from passing through
-       the loaded room models. It raycasts only while the player is
-       moving and uses horizontal body-height rays, which is much
-       lighter than creating thousands of live physics colliders.
     ============================================================ */
     AFRAME.registerComponent('quest-room-collider', {
       schema: {
@@ -466,10 +517,6 @@
           default: 0.12
         },
 
-        /*
-          Large jumps are treated as teleporting rather than walking,
-          so blink teleport still works.
-        */
         teleportDistance: {
           default: 0.75
         }
@@ -529,9 +576,6 @@
           () => this.resetPosition()
         );
 
-        /*
-          Refresh after each GLB finishes loading.
-        */
         this.el.sceneEl
           .querySelectorAll(this.data.objects)
           .forEach((entity) => {
@@ -616,10 +660,6 @@
           this.direction.x
         );
 
-        /*
-          Rays cover the player's left side, centre and right side
-          at foot, waist and upper-body heights.
-        */
         const heights = [
           0.22,
           0.85,
@@ -657,10 +697,6 @@
             this.origin.y +=
               heights[heightIndex];
 
-            /*
-              A very small forward offset prevents a ray from
-              repeatedly striking the exact surface it just left.
-            */
             this.origin.addScaledVector(
               this.direction,
               0.004
@@ -680,10 +716,6 @@
                 false
               );
 
-            /*
-              Ignore an item while it is being held by either hand.
-              All other loaded GLB models remain solid.
-            */
             const blockingHit =
               hits.find((hit) => {
                 const owner =
@@ -753,9 +785,6 @@
           index < steps;
           index++
         ) {
-          /*
-            Try the complete diagonal movement first.
-          */
           this.testPosition
             .copy(this.safePosition)
             .add(this.step);
@@ -773,11 +802,6 @@
             continue;
           }
 
-          /*
-            When diagonal movement is blocked, try X and Z
-            independently so the player slides along the wall
-            instead of becoming completely stuck.
-          */
           if (
             Math.abs(this.step.x) >
             0.0001
@@ -845,10 +869,6 @@
             this.to.z - this.from.z
           );
 
-        /*
-          Blink teleport makes a large instantaneous jump. Allow it
-          and begin collision checks from the new location.
-        */
         if (
           horizontalDistance >
           this.data.teleportDistance
@@ -893,7 +913,7 @@
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
-        openAngle: { default: 45 },
+        openAngle: { default: 100 },
 
         hingeSide: {
           default: 'left',
@@ -972,11 +992,6 @@
           return;
         }
 
-        /*
-          Skip glTF wrapper groups that contain only one meaningful
-          child. The first branching level is treated as separate
-          door objects.
-        */
         let container = this.root;
 
         while (true) {
@@ -1128,10 +1143,6 @@
 
         this.el.object3D.add(pivot);
 
-        /*
-          Only the selected internal door part is moved underneath
-          this hinge. Other door parts stay where they are.
-        */
         pivot.attach(part);
 
         const state = {
@@ -1182,13 +1193,6 @@
         this.lastActivation = now;
         this.lastActiveState = state;
 
-        /*
-          Toggle the requested final state.
-          Open goes from the current angle to 45 degrees.
-          Close goes from the current angle back to 0 degrees.
-          Clicking while it is moving reverses it smoothly from
-          wherever it currently is.
-        */
         state.isOpen = !state.isOpen;
         state.startAngle = state.currentAngle;
 
@@ -1227,10 +1231,6 @@
 
         this.lastActivation = now;
 
-        /*
-          Close the most recently opened door even when the controller
-          ray no longer touches it because the door has swung away.
-        */
         state.isOpen = false;
         state.startAngle =
           state.currentAngle;
@@ -1243,10 +1243,6 @@
       },
 
       easeInOut: function (value) {
-        /*
-          Smooth acceleration and deceleration.
-          Closing uses the exact same curve as opening, reversed.
-        */
         return value < 0.5
           ? 2 * value * value
           : 1 - Math.pow(-2 * value + 2, 2) / 2;
@@ -1299,7 +1295,7 @@
 
 
     /* ============================================================
-       6. NATURAL GRABBABLE (proximity-based, VR game style)
+       6b. NATURAL GRABBABLE (proximity-based, VR game style)
 
        Desktop: click to pick up, click again to drop.
        VR: move the hand near the item and hold grip.
@@ -1376,38 +1372,17 @@
         );
       },
 
-      reparentPreserveWorld: function (newParent) {
-        const object =
-          this.el.object3D;
-
-        object.updateMatrixWorld(true);
-
-        const worldMatrix =
-          object.matrixWorld.clone();
-
-        newParent.object3D.updateMatrixWorld(true);
-
-        newParent.appendChild(this.el);
-
-        const inverseParentWorld =
-          new THREE.Matrix4()
-            .copy(newParent.object3D.matrixWorld)
-            .invert();
-
-        const localMatrix =
-          new THREE.Matrix4().multiplyMatrices(
-            inverseParentWorld,
-            worldMatrix
-          );
-
-        localMatrix.decompose(
-          object.position,
-          object.quaternion,
-          object.scale
-        );
-
-        object.updateMatrix();
-        object.updateMatrixWorld(true);
+      reparentPreserveWorld: function (newParentObject3D) {
+        /*
+          Direct THREE.js reparenting only — no DOM appendChild.
+          Object3D.attach() computes and preserves the object's
+          exact world transform automatically when moving it under
+          a new parent, so the item never jumps, and it reliably
+          starts following its new parent (hand or scene root)
+          every frame from then on.
+        */
+        newParentObject3D.updateMatrixWorld(true);
+        newParentObject3D.attach(this.el.object3D);
       },
 
       grab: function (handEntity) {
@@ -1420,7 +1395,7 @@
         this.heldBy = handEntity;
 
         this.reparentPreserveWorld(
-          handEntity
+          handEntity.object3D
         );
 
         this.el.addState('grabbed');
@@ -1442,7 +1417,7 @@
         const scene =
           this.el.sceneEl;
 
-        this.reparentPreserveWorld(scene);
+        this.reparentPreserveWorld(scene.object3D);
 
         this.heldBy = null;
         this.el.removeState('grabbed');
@@ -1480,11 +1455,6 @@
       getRoomMeshes: function () {
         const now = performance.now();
 
-        /*
-          Reuse the room mesh list for five seconds. The old code
-          traversed all six GLB models repeatedly while an item was
-          falling, which can cause unnecessary Quest stutter.
-        */
         if (
           this.cachedRoomMeshes.length &&
           now - this.roomMeshCacheTime < 5000
@@ -1659,30 +1629,10 @@
 
     /* ============================================================
        NATURAL VR HAND GRAB
-
-       FIX (this pass): grabbing was completely failing in the
-       headset. Two likely causes are handled defensively now,
-       since they can't both be tested without a live Quest:
-
-       1. Some Quest Browser builds only report the grip trigger as
-          a continuous analog "gripchanged" value and never fire a
-          clean boolean "gripdown"/"gripup" pair. We now also watch
-          "gripchanged" and manually cross a 0.5 press threshold to
-          trigger grab/release, so grabbing works either way.
-
-       2. The proximity radius (how close your hand has to be) was
-          tight. Raised 0.4 -> 0.55m so it's much more forgiving.
-
-       3. Added a fallback grab button (A / X, i.e. the lower face
-          button on each Touch controller) as "abuttondown" /
-          "xbuttondown". If grip still doesn't work for some reason,
-          you can grab/release with that button instead — and it
-          also tells you (via which button works) whether the issue
-          is specifically the grip mapping.
     ============================================================ */
     AFRAME.registerComponent('natural-grab-hand', {
       schema: {
-        radius: { default: 0.55 },
+        radius: { default: 1.0 },
         velocitySmoothing: { default: 0.35 },
         gripThreshold: { default: 0.5 }
       },
@@ -1716,11 +1666,6 @@
         this.onGripChanged =
           this.onGripChanged.bind(this);
 
-        /*
-          hand-controls normally emits gripdown/gripup.
-          squeezestart/squeezeend are included as a WebXR fallback.
-          gripHeld prevents the same physical press firing twice.
-        */
         this.el.addEventListener(
           'gripdown',
           this.beginGrip
@@ -1741,21 +1686,11 @@
           this.endGrip
         );
 
-        /*
-          Analog fallback: if only "gripchanged" fires (no discrete
-          down/up on this device/browser), derive a press/release
-          from the raw axis value crossing gripThreshold.
-        */
         this.el.addEventListener(
           'gripchanged',
           this.onGripChanged
         );
 
-        /*
-          Face-button fallback grab, in case grip mapping itself
-          isn't working on this controller: A button on the right
-          Touch controller, X button on the left one.
-        */
         this.el.addEventListener(
           'abuttondown',
           this.beginGrip
@@ -1968,11 +1903,6 @@
           );
         }
 
-        /*
-          Live "distance to nearest grabbable" readout, throttled to
-          ~6 times per second so it doesn't spam querySelectorAll
-          every single frame.
-        */
         if (!this.heldItem && time - this.lastHudUpdate > 150) {
           this.lastHudUpdate = time;
 
@@ -1999,15 +1929,6 @@
 
     /* ============================================================
        RIGHT TRIGGER: DOOR ONLY
-
-       FIX: raycaster objects widened from ".door" to ".door, .item"
-       so the teddy/hairpin's mouseenter/mouseleave hover animations
-       actually fire again in VR (they need something raycasting at
-       them to trigger). useDoor() still only reacts to elements
-       that resolve to a door-hinge component, so widening this list
-       doesn't cause the trigger to accidentally grab items — grip
-       proximity still owns grabbing, trigger still only opens/closes
-       the door.
     ============================================================ */
     AFRAME.registerComponent('vr-door-interactor', {
       init: function () {
@@ -2057,11 +1978,6 @@
             : null;
 
         if (!intersection) {
-          /*
-            When the opened door has moved out of the laser line,
-            pressing the same right trigger closes the last opened
-            door instead of doing nothing.
-          */
           const doorComponent =
             door.components['door-hinge'];
 
@@ -2081,11 +1997,6 @@
         );
       }
     });
-
-
-    /* ============================================================
-       8. AUDIO UNLOCK
-    ============================================================ */
 
 
     /* ============================================================
@@ -2350,7 +2261,7 @@
       rotation="0 0 0"
 
       door-hinge="
-        openAngle: 45;
+        openAngle: 100;
         hingeSide: left;
         direction: 1;
         speed: 7"
@@ -2361,6 +2272,16 @@
 
     <!-- ======================================================
          INTERACTIVE TEDDY
+
+         FIX: position reset to 0 0 0. teddy.glb was exported from
+         the full house scene, so its internal glTF node transform
+         already places it at its real location in the house
+         (world bounding-box center logs to the console once it
+         loads — check "-> Teddy bear world bounding box center").
+         The previous "1 0.6 -2" was stacked ON TOP of that baked
+         transform, which is why it ended up roughly 6-7 metres
+         away from where it should be — invisible and unreachable
+         by both the cursor raycaster and VR grab proximity.
     ======================================================= -->
     <a-entity
       id="teddy"
@@ -2368,7 +2289,7 @@
 
       gltf-model="url(teddy.glb)"
 
-      position="1 0.6 -2"
+      position="0 0 0"
 
       natural-grabbable
 
@@ -2390,6 +2311,10 @@
 
     <!-- ======================================================
          INTERACTIVE HAIRPIN
+
+         FIX: same double-offset bug as teddy above. position
+         reset to 0 0 0 so hairpin.glb's own baked coordinates
+         (its real spot in the house) are used directly.
     ======================================================= -->
     <a-entity
       id="hairpin"
@@ -2397,7 +2322,7 @@
 
       gltf-model="url(hairpin.glb)"
 
-      position="1.5 0.6 -2"
+      position="0 0 0"
 
       natural-grabbable
 
@@ -2451,7 +2376,7 @@
           near: 0.01;
           fov: 60"
 
-        position="0 1.6 0"
+        position="0 1.45 0"
 
         look-controls
 
@@ -2501,16 +2426,12 @@
           rotateOnTeleport: false"
 
         natural-grab-hand="
-          radius: 0.55;
+          radius: 1.0;
           velocitySmoothing: 0.35">
       </a-entity>
 
 
-      <!-- Right controller: door trigger + natural grab
-
-           FIX: raycaster objects widened to ".door, .item" so
-           hover animations work on items again; grab radius raised
-           to 0.55 to match the left hand. -->
+      <!-- Right controller: door trigger + natural grab -->
       <a-entity
         id="rightHand"
 
@@ -2526,7 +2447,7 @@
           lineOpacity: 0.8"
 
         natural-grab-hand="
-          radius: 0.55;
+          radius: 1.0;
           velocitySmoothing: 0.35"
 
         vr-door-interactor>
