@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Lower POV + Human Walk Sway + Quieter Audio</title>
+  <title>VR Room - Mac and VR Door Support</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -990,6 +990,40 @@
           }
         );
 
+        /*
+          Desktop mouse support:
+          clicking the visible door opens/closes it.
+          Hovering alone does nothing.
+        */
+        this.el.addEventListener(
+          'click',
+          (event) => {
+            if (this.el.sceneEl.is('vr-mode')) {
+              return;
+            }
+
+            if (event && event.stopPropagation) {
+              event.stopPropagation();
+            }
+
+            const hitObject =
+              event &&
+              event.detail &&
+              event.detail.intersection
+                ? event.detail.intersection.object
+                : null;
+
+            if (
+              hitObject &&
+              this.activatePart(hitObject)
+            ) {
+              return;
+            }
+
+            this.toggleLastDoor();
+          }
+        );
+
       },
 
       hasMeshDescendant: function (object) {
@@ -1111,6 +1145,30 @@
 
         this.el.sceneEl.appendChild(
           target
+        );
+
+        /*
+          Desktop mouse support for the fixed doorway target.
+          Clicking the same doorway area toggles the last selected
+          door even after the visible mesh has swung away.
+        */
+        target.addEventListener(
+          'click',
+          (event) => {
+            if (this.el.sceneEl.is('vr-mode')) {
+              return;
+            }
+
+            if (event && event.stopPropagation) {
+              event.stopPropagation();
+            }
+
+            if (this.toggleLastDoor()) {
+              return;
+            }
+
+            this.activateDefaultPart();
+          }
         );
 
         this.pressTarget = target;
@@ -2570,7 +2628,8 @@
     <a-entity
       id="rig"
 
-position="1 0.08 0.5"
+      position="1 0.08 0.5"
+
       movement-controls="
         speed: 0.15;
         controls: gamepad, keyboard, touch;
@@ -2597,7 +2656,8 @@ position="1 0.08 0.5"
           near: 0.01;
           fov: 60"
 
-position="0 1.6 0"
+        position="0 1.6 0"
+
         look-controls
 
         head-bob="
@@ -2624,7 +2684,7 @@ position="0 1.6 0"
             fuse: false"
 
           raycaster="
-            objects: .item;
+            objects: #door, .door-press-target, .item;
             far: 6;
             interval: 50">
         </a-cursor>
