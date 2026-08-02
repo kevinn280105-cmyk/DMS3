@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - 100 Degree Click Door + Taller POV</title>
+  <title>VR Room - Lower POV + Human Walk Sway + Quieter Audio</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -134,19 +134,19 @@
       const tracks = [
         {
           element: document.querySelector('#fanAudio'),
-          volume: 0.28
+          volume: 0.20
         },
         {
           element: document.querySelector('#bedroomRainAudio'),
-          volume: 0.22
+          volume: 0.16
         },
         {
           element: document.querySelector('#fluorescentAudio'),
-          volume: 0.18
+          volume: 0.12
         },
         {
           element: document.querySelector('#tvStaticAudio'),
-          volume: 0.08
+          volume: 0.05
         }
       ];
 
@@ -395,68 +395,139 @@
     ============================================================ */
     AFRAME.registerComponent('head-bob', {
       schema: {
-        amount: { default: 0.025 },
-        speed: { default: 11 }
+        verticalAmount: {
+          default: 0.026
+        },
+
+        sideAmount: {
+          default: 0.014
+        },
+
+        speed: {
+          default: 8.5
+        },
+
+        /*
+          Artificial camera motion is kept much gentler inside VR.
+        */
+        vrMultiplier: {
+          default: 0.3
+        }
       },
 
       init: function () {
-        this.baseY = this.el.object3D.position.y;
-        this.time = 0;
+        this.baseX =
+          this.el.object3D.position.x;
 
-        this.previousPosition = new THREE.Vector3();
-        this.currentPosition = new THREE.Vector3();
+        this.baseY =
+          this.el.object3D.position.y;
 
-        this.el.object3D.getWorldPosition(
-          this.previousPosition
-        );
+        this.phase = 0;
+
+        this.rig =
+          document.querySelector('#rig');
+
+        this.previousRigPosition =
+          new THREE.Vector3();
+
+        this.currentRigPosition =
+          new THREE.Vector3();
+
+        if (this.rig) {
+          this.rig.object3D.getWorldPosition(
+            this.previousRigPosition
+          );
+        }
       },
 
       tick: function (time, deltaTime) {
-        if (this.el.sceneEl.is('vr-mode')) {
+        if (!deltaTime || !this.rig) {
           return;
         }
 
-        this.el.object3D.getWorldPosition(
-          this.currentPosition
+        this.rig.object3D.getWorldPosition(
+          this.currentRigPosition
         );
 
         const deltaX =
-          this.currentPosition.x -
-          this.previousPosition.x;
+          this.currentRigPosition.x -
+          this.previousRigPosition.x;
 
         const deltaZ =
-          this.currentPosition.z -
-          this.previousPosition.z;
+          this.currentRigPosition.z -
+          this.previousRigPosition.z;
 
-        const distance = Math.sqrt(
-          (deltaX * deltaX) +
-          (deltaZ * deltaZ)
-        );
+        const distance =
+          Math.sqrt(
+            deltaX * deltaX +
+            deltaZ * deltaZ
+          );
 
-        if (
-          distance > 0.001 &&
-          distance < 0.5
-        ) {
-          this.time +=
+        /*
+          Ignore tiny tracking noise and large blink-teleport jumps.
+        */
+        const isWalking =
+          distance > 0.0001 &&
+          distance < 0.5;
+
+        const vrScale =
+          this.el.sceneEl.is('vr-mode')
+            ? this.data.vrMultiplier
+            : 1;
+
+        if (isWalking) {
+          this.phase +=
             deltaTime *
             0.001 *
             this.data.speed;
 
-          this.el.object3D.position.y =
+          /*
+            Human walking has a gentle vertical rise twice per stride,
+            while the torso shifts left and right once per stride.
+          */
+          const targetX =
+            this.baseX +
+            Math.sin(this.phase) *
+            this.data.sideAmount *
+            vrScale;
+
+          const targetY =
             this.baseY +
-            Math.sin(this.time) *
-            this.data.amount;
+            Math.sin(this.phase * 2) *
+            this.data.verticalAmount *
+            vrScale;
+
+          this.el.object3D.position.x =
+            THREE.MathUtils.lerp(
+              this.el.object3D.position.x,
+              targetX,
+              0.32
+            );
+
+          this.el.object3D.position.y =
+            THREE.MathUtils.lerp(
+              this.el.object3D.position.y,
+              targetY,
+              0.32
+            );
         } else {
+          this.el.object3D.position.x =
+            THREE.MathUtils.lerp(
+              this.el.object3D.position.x,
+              this.baseX,
+              0.14
+            );
+
           this.el.object3D.position.y =
             THREE.MathUtils.lerp(
               this.el.object3D.position.y,
               this.baseY,
-              0.1
+              0.14
             );
         }
 
-        this.previousPosition.copy(
-          this.currentPosition
+        this.previousRigPosition.copy(
+          this.currentRigPosition
         );
       }
     });
@@ -2169,7 +2240,7 @@
         this.isPlaying = false;
 
         if (this.audio) {
-          this.audio.volume = 0.5;
+          this.audio.volume = 0.30;
         }
       },
 
@@ -2499,7 +2570,7 @@
     <a-entity
       id="rig"
 
-      position="1 0.18 0.5"
+      position="1 0.08 0.5"
 
       movement-controls="
         speed: 0.15;
@@ -2532,8 +2603,10 @@
         look-controls
 
         head-bob="
-          amount: 0.025;
-          speed: 11">
+          verticalAmount: 0.026;
+          sideAmount: 0.014;
+          speed: 8.5;
+          vrMultiplier: 0.3">
 
 
         <!-- Desktop object-holding point -->
