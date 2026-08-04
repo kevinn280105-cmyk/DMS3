@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>Rooms Within - Exit VR, Spatial Audio, Smaller Door Target</title>
+  <title>Rooms Within - Mac Exit + Independent Double Doors</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -225,8 +225,27 @@
           this.el.sceneEl;
 
         const updateVisibility = () => {
+          const immersiveXR =
+            Boolean(
+              scene.renderer &&
+              scene.renderer.xr &&
+              scene.renderer.xr.isPresenting
+            );
+
+          const browserFullscreen =
+            Boolean(
+              document.fullscreenElement ||
+              document.webkitFullscreenElement
+            );
+
+          /*
+            Show the button in a Quest WebXR session and in Mac
+            browser fullscreen. Keep it hidden during normal browsing.
+          */
           this.el.setAttribute(
             'visible',
+            immersiveXR ||
+            browserFullscreen ||
             scene.is('vr-mode')
           );
         };
@@ -236,7 +255,7 @@
           () => {
             window.setTimeout(
               updateVisibility,
-              0
+              100
             );
           }
         );
@@ -246,7 +265,83 @@
           updateVisibility
         );
 
+        document.addEventListener(
+          'fullscreenchange',
+          updateVisibility
+        );
+
+        document.addEventListener(
+          'webkitfullscreenchange',
+          updateVisibility
+        );
+
         updateVisibility();
+      }
+    });
+
+
+    AFRAME.registerComponent('exit-experience', {
+      init: function () {
+        this.el.addEventListener(
+          'click',
+          (event) => {
+            if (
+              event &&
+              event.stopPropagation
+            ) {
+              event.stopPropagation();
+            }
+
+            this.exitExperience();
+          }
+        );
+      },
+
+      exitExperience: function () {
+        const scene =
+          this.el.sceneEl;
+
+        const immersiveXR =
+          Boolean(
+            scene.renderer &&
+            scene.renderer.xr &&
+            scene.renderer.xr.isPresenting
+          );
+
+        /*
+          Quest/WebXR exit.
+        */
+        if (
+          immersiveXR ||
+          scene.is('vr-mode')
+        ) {
+          const result =
+            scene.exitVR();
+
+          if (
+            result &&
+            typeof result.catch === 'function'
+          ) {
+            result.catch((error) => {
+              console.error(
+                'Could not leave VR mode.',
+                error
+              );
+            });
+          }
+        }
+
+        /*
+          Mac/browser fullscreen exit.
+        */
+        if (document.fullscreenElement) {
+          document.exitFullscreen();
+        } else if (
+          document.webkitFullscreenElement &&
+          document.webkitExitFullscreen
+        ) {
+          document.webkitExitFullscreen();
+        }
       }
     });
 
@@ -990,30 +1085,46 @@
     ============================================================ */
     AFRAME.registerComponent('door-hinge', {
       schema: {
-        openAngle: { default: 100 },
+        openAngle: {
+          default: 100
+        },
 
         hingeSide: {
           default: 'left',
           oneOf: ['left', 'right']
         },
 
-        direction: { default: 1 },
-        duration: { default: 650 }
+        direction: {
+          default: 1
+        },
+
+        duration: {
+          default: 650
+        },
+
+        /*
+          Automatically attempts to separate a two-leaf door model
+          into independent left and right doors.
+        */
+        splitDoubleDoor: {
+          default: true
+        }
       },
 
       init: function () {
         this.root = null;
+        this.container = null;
         this.parts = [];
         this.partStates = new Map();
         this.lastActivation = 0;
         this.lastActiveState = null;
-        this.pressTarget = null;
+        this.modelBox = null;
+        this.widthAxis = 'x';
 
         this.el.addEventListener(
           'model-loaded',
           () => {
             this.prepareDoorParts();
-            this.createPressTarget();
           }
         );
 
@@ -1031,9 +1142,7 @@
         );
 
         /*
-          Desktop mouse support:
-          clicking the visible door opens/closes it.
-          Hovering alone does nothing.
+          Mac mouse click support. Hovering alone does nothing.
         */
         this.el.addEventListener(
           'click',
@@ -1042,7 +1151,10 @@
               return;
             }
 
-            if (event && event.stopPropagation) {
+            if (
+              event &&
+              event.stopPropagation
+            ) {
               event.stopPropagation();
             }
 
@@ -1053,17 +1165,15 @@
                 ? event.detail.intersection.object
                 : null;
 
-            if (
-              hitObject &&
-              this.activatePart(hitObject)
-            ) {
+            if (!hitObject) {
               return;
             }
 
-            this.toggleLastDoor();
+            this.activatePart(
+              hitObject
+            );
           }
         );
-
       },
 
       hasMeshDescendant: function (object) {
@@ -1078,197 +1188,30 @@
         return found;
       },
 
-      prepareDoorParts: function () {
-        this.root =
-          this.el.getObject3D('mesh');
-
-        if (!this.root) {
-          return;
-        }
-
-        let container = this.root;
-
-        while (true) {
-          const meaningfulChildren =
-            container.children.filter(
-              child =>
-                this.hasMeshDescendant(child)
-            );
-
-          if (
-            meaningfulChildren.length !== 1 ||
-            meaningfulChildren[0].isMesh
-          ) {
-            break;
-          }
-
-          container = meaningfulChildren[0];
-        }
-
-        this.parts =
-          container.children.filter(
-            child =>
-              this.hasMeshDescendant(child)
-          );
-
-        if (!this.parts.length) {
-          this.parts = [container];
-        }
-
-        console.log(
-          `Door model contains ${this.parts.length} selectable part(s).`
-        );
-      },
-
-      createPressTarget: function () {
-        if (this.pressTarget || !this.root) {
-          return;
-        }
-
-        this.root.updateMatrixWorld(true);
-
-        const box =
-          new THREE.Box3().setFromObject(
-            this.root
-          );
-
-        if (box.isEmpty()) {
-          return;
-        }
-
-        const size =
-          new THREE.Vector3();
-
-        const center =
-          new THREE.Vector3();
-
-        box.getSize(size);
-        box.getCenter(center);
-
-        const target =
-          document.createElement('a-box');
-
-        target.setAttribute(
-          'id',
-          'doorPressTarget'
-        );
-
-        target.setAttribute(
-          'class',
-          'door-press-target'
-        );
-
-        target.setAttribute(
-          'position',
-          `${center.x} ${center.y} ${center.z}`
-        );
-
-        /*
-          A smaller centre target prevents accidental door clicks
-          while the user is looking or moving around.
-        */
-        target.setAttribute(
-          'width',
-          Math.max(size.x * 0.58, 0.22)
-        );
-
-        target.setAttribute(
-          'height',
-          Math.max(size.y * 0.68, 0.55)
-        );
-
-        target.setAttribute(
-          'depth',
-          Math.max(size.z * 0.58, 0.12)
-        );
-
-        target.setAttribute(
-          'material',
-          'opacity: 0; transparent: true; depthWrite: false; side: double'
-        );
-
-        this.el.sceneEl.appendChild(
-          target
-        );
-
-        /*
-          Desktop mouse support for the fixed doorway target.
-          Clicking the same doorway area toggles the last selected
-          door even after the visible mesh has swung away.
-        */
-        target.addEventListener(
-          'click',
-          (event) => {
-            if (this.el.sceneEl.is('vr-mode')) {
-              return;
-            }
-
-            if (event && event.stopPropagation) {
-              event.stopPropagation();
-            }
-
-            if (this.toggleLastDoor()) {
-              return;
-            }
-
-            this.activateDefaultPart();
-          }
-        );
-
-        this.pressTarget = target;
-      },
-
-      activateDefaultPart: function () {
-        if (!this.parts.length) {
-          return false;
-        }
-
-        return this.activatePart(
-          this.parts[0]
-        );
-      },
-
-      findPartFromHit: function (hitObject) {
-        let current = hitObject;
-
-        while (current) {
-          if (
-            current.userData &&
-            current.userData.doorPartState
-          ) {
-            return current.userData.doorPartState.part;
-          }
-
-          if (this.parts.includes(current)) {
-            return current;
-          }
-
-          if (current === this.root) {
-            break;
-          }
-
-          current = current.parent;
-        }
-
-        return this.parts.length === 1
-          ? this.parts[0]
-          : null;
-      },
-
       getLocalBoundingBox: function (part) {
-        const box = new THREE.Box3();
+        const box =
+          new THREE.Box3();
+
         box.makeEmpty();
 
-        this.el.object3D.updateMatrixWorld(true);
+        this.el.object3D.updateMatrixWorld(
+          true
+        );
+
         part.updateMatrixWorld(true);
 
         const inverseEntityWorld =
           new THREE.Matrix4()
-            .copy(this.el.object3D.matrixWorld)
+            .copy(
+              this.el.object3D.matrixWorld
+            )
             .invert();
 
         part.traverse((node) => {
-          if (!node.isMesh || !node.geometry) {
+          if (
+            !node.isMesh ||
+            !node.geometry
+          ) {
             return;
           }
 
@@ -1281,15 +1224,18 @@
           }
 
           const nodeToEntity =
-            new THREE.Matrix4().multiplyMatrices(
-              inverseEntityWorld,
-              node.matrixWorld
-            );
+            new THREE.Matrix4()
+              .multiplyMatrices(
+                inverseEntityWorld,
+                node.matrixWorld
+              );
 
           const nodeBox =
             node.geometry.boundingBox
               .clone()
-              .applyMatrix4(nodeToEntity);
+              .applyMatrix4(
+                nodeToEntity
+              );
 
           box.union(nodeBox);
         });
@@ -1297,20 +1243,412 @@
         return box;
       },
 
+      getMeshLocalBox: function (mesh) {
+        if (
+          !mesh.geometry ||
+          !mesh.geometry.boundingBox
+        ) {
+          if (mesh.geometry) {
+            mesh.geometry.computeBoundingBox();
+          }
+        }
+
+        if (
+          !mesh.geometry ||
+          !mesh.geometry.boundingBox
+        ) {
+          return null;
+        }
+
+        this.el.object3D.updateMatrixWorld(
+          true
+        );
+
+        mesh.updateMatrixWorld(true);
+
+        const inverseEntityWorld =
+          new THREE.Matrix4()
+            .copy(
+              this.el.object3D.matrixWorld
+            )
+            .invert();
+
+        const meshToEntity =
+          new THREE.Matrix4()
+            .multiplyMatrices(
+              inverseEntityWorld,
+              mesh.matrixWorld
+            );
+
+        return mesh.geometry.boundingBox
+          .clone()
+          .applyMatrix4(
+            meshToEntity
+          );
+      },
+
+      buildDoubleDoorParts: function () {
+        if (
+          !this.data.splitDoubleDoor ||
+          !this.container ||
+          !this.modelBox
+        ) {
+          return false;
+        }
+
+        const modelSize =
+          new THREE.Vector3();
+
+        const modelCenter =
+          new THREE.Vector3();
+
+        this.modelBox.getSize(
+          modelSize
+        );
+
+        this.modelBox.getCenter(
+          modelCenter
+        );
+
+        this.widthAxis =
+          modelSize.x >= modelSize.z
+            ? 'x'
+            : 'z';
+
+        const horizontalSize =
+          this.widthAxis === 'x'
+            ? modelSize.x
+            : modelSize.z;
+
+        const horizontalCenter =
+          this.widthAxis === 'x'
+            ? modelCenter.x
+            : modelCenter.z;
+
+        if (horizontalSize <= 0.001) {
+          return false;
+        }
+
+        const meshes = [];
+
+        this.container.traverse((node) => {
+          if (
+            node.isMesh &&
+            node.geometry &&
+            node.visible
+          ) {
+            const box =
+              this.getMeshLocalBox(node);
+
+            if (!box || box.isEmpty()) {
+              return;
+            }
+
+            const size =
+              new THREE.Vector3();
+
+            const center =
+              new THREE.Vector3();
+
+            box.getSize(size);
+            box.getCenter(center);
+
+            const horizontalCenterValue =
+              this.widthAxis === 'x'
+                ? center.x
+                : center.z;
+
+            const horizontalExtent =
+              this.widthAxis === 'x'
+                ? size.x
+                : size.z;
+
+            /*
+              Ignore a single huge backing/frame mesh. Keep central
+              panels and their nearby details.
+            */
+            const coversAlmostEverything =
+              horizontalExtent >
+                horizontalSize * 0.88 &&
+              size.y >
+                modelSize.y * 0.82;
+
+            const insideCentralBand =
+              Math.abs(
+                horizontalCenterValue -
+                horizontalCenter
+              ) <
+              horizontalSize * 0.43;
+
+            if (
+              !coversAlmostEverything &&
+              insideCentralBand
+            ) {
+              meshes.push({
+                mesh: node,
+                box,
+                size,
+                center,
+                horizontalCenter:
+                  horizontalCenterValue
+              });
+            }
+          }
+        });
+
+        if (meshes.length < 2) {
+          return false;
+        }
+
+        const leftMeshes =
+          meshes.filter(
+            entry =>
+              entry.horizontalCenter <
+              horizontalCenter
+          );
+
+        const rightMeshes =
+          meshes.filter(
+            entry =>
+              entry.horizontalCenter >=
+              horizontalCenter
+          );
+
+        if (
+          !leftMeshes.length ||
+          !rightMeshes.length
+        ) {
+          return false;
+        }
+
+        const leftBox =
+          new THREE.Box3();
+
+        const rightBox =
+          new THREE.Box3();
+
+        leftBox.makeEmpty();
+        rightBox.makeEmpty();
+
+        leftMeshes.forEach(
+          entry =>
+            leftBox.union(entry.box)
+        );
+
+        rightMeshes.forEach(
+          entry =>
+            rightBox.union(entry.box)
+        );
+
+        const leftSize =
+          new THREE.Vector3();
+
+        const rightSize =
+          new THREE.Vector3();
+
+        leftBox.getSize(leftSize);
+        rightBox.getSize(rightSize);
+
+        const leftHorizontal =
+          this.widthAxis === 'x'
+            ? leftSize.x
+            : leftSize.z;
+
+        const rightHorizontal =
+          this.widthAxis === 'x'
+            ? rightSize.x
+            : rightSize.z;
+
+        /*
+          Both groups must resemble meaningful door leaves.
+        */
+        if (
+          leftSize.y <
+            modelSize.y * 0.32 ||
+          rightSize.y <
+            modelSize.y * 0.32 ||
+          leftHorizontal <
+            horizontalSize * 0.08 ||
+          rightHorizontal <
+            horizontalSize * 0.08
+        ) {
+          return false;
+        }
+
+        const leftGroup =
+          new THREE.Group();
+
+        const rightGroup =
+          new THREE.Group();
+
+        leftGroup.name =
+          'auto-left-door-leaf';
+
+        rightGroup.name =
+          'auto-right-door-leaf';
+
+        this.el.object3D.add(
+          leftGroup
+        );
+
+        this.el.object3D.add(
+          rightGroup
+        );
+
+        /*
+          attach() preserves each mesh's exact world transform.
+        */
+        leftMeshes.forEach(
+          entry =>
+            leftGroup.attach(
+              entry.mesh
+            )
+        );
+
+        rightMeshes.forEach(
+          entry =>
+            rightGroup.attach(
+              entry.mesh
+            )
+        );
+
+        leftGroup.userData.autoDoorSide =
+          'left';
+
+        rightGroup.userData.autoDoorSide =
+          'right';
+
+        this.parts = [
+          leftGroup,
+          rightGroup
+        ];
+
+        console.log(
+          'Double door detected: left and right leaves are independently selectable.'
+        );
+
+        return true;
+      },
+
+      prepareDoorParts: function () {
+        this.root =
+          this.el.getObject3D('mesh');
+
+        if (!this.root) {
+          return;
+        }
+
+        let container =
+          this.root;
+
+        while (true) {
+          const meaningfulChildren =
+            container.children.filter(
+              child =>
+                this.hasMeshDescendant(
+                  child
+                )
+            );
+
+          if (
+            meaningfulChildren.length !== 1 ||
+            meaningfulChildren[0].isMesh
+          ) {
+            break;
+          }
+
+          container =
+            meaningfulChildren[0];
+        }
+
+        this.container =
+          container;
+
+        this.modelBox =
+          this.getLocalBoundingBox(
+            container
+          );
+
+        if (
+          this.buildDoubleDoorParts()
+        ) {
+          return;
+        }
+
+        this.parts =
+          container.children.filter(
+            child =>
+              this.hasMeshDescendant(
+                child
+              )
+          );
+
+        if (!this.parts.length) {
+          this.parts = [container];
+        }
+
+        console.log(
+          `Door model contains ${this.parts.length} selectable part(s).`
+        );
+      },
+
+      findPartFromHit: function (
+        hitObject
+      ) {
+        let current =
+          hitObject;
+
+        while (current) {
+          if (
+            current.userData &&
+            current.userData.doorPartState
+          ) {
+            return current.userData
+              .doorPartState.part;
+          }
+
+          if (
+            this.parts.includes(current)
+          ) {
+            return current;
+          }
+
+          if (current === this.root) {
+            break;
+          }
+
+          current =
+            current.parent;
+        }
+
+        return this.parts.length === 1
+          ? this.parts[0]
+          : null;
+      },
+
       createState: function (part) {
-        if (this.partStates.has(part)) {
-          return this.partStates.get(part);
+        if (
+          this.partStates.has(part)
+        ) {
+          return this.partStates.get(
+            part
+          );
         }
 
         const box =
-          this.getLocalBoundingBox(part);
+          this.getLocalBoundingBox(
+            part
+          );
 
         if (box.isEmpty()) {
           return null;
         }
 
-        const size = new THREE.Vector3();
-        const center = new THREE.Vector3();
+        const size =
+          new THREE.Vector3();
+
+        const center =
+          new THREE.Vector3();
 
         box.getSize(size);
         box.getCenter(center);
@@ -1318,17 +1656,21 @@
         const widthRunsAlongX =
           size.x >= size.z;
 
+        const side =
+          part.userData.autoDoorSide ||
+          this.data.hingeSide;
+
         const hingePosition =
           center.clone();
 
         if (widthRunsAlongX) {
           hingePosition.x =
-            this.data.hingeSide === 'left'
+            side === 'left'
               ? box.min.x
               : box.max.x;
         } else {
           hingePosition.z =
-            this.data.hingeSide === 'left'
+            side === 'left'
               ? box.min.z
               : box.max.z;
         }
@@ -1337,19 +1679,41 @@
           new THREE.Group();
 
         pivot.name =
-          'individual-door-hinge';
+          `individual-door-hinge-${side}`;
 
         pivot.position.copy(
           hingePosition
         );
 
-        this.el.object3D.add(pivot);
+        this.el.object3D.add(
+          pivot
+        );
 
         pivot.attach(part);
+
+        /*
+          The right leaf opens in the opposite direction from
+          the left leaf. A normal single door keeps the configured
+          direction.
+        */
+        const automaticDirection =
+          part.userData.autoDoorSide ===
+          'right'
+            ? -Math.abs(
+                this.data.direction
+              )
+            : part.userData.autoDoorSide ===
+              'left'
+              ? Math.abs(
+                  this.data.direction
+                )
+              : this.data.direction;
 
         const state = {
           part,
           pivot,
+          direction:
+            automaticDirection,
           isOpen: false,
           currentAngle: 0,
           startAngle: 0,
@@ -1358,8 +1722,13 @@
           isAnimating: false
         };
 
-        part.userData.doorPartState = state;
-        this.partStates.set(part, state);
+        part.userData.doorPartState =
+          state;
+
+        this.partStates.set(
+          part,
+          state
+        );
 
         return state;
       },
@@ -1368,14 +1737,16 @@
         state,
         shouldOpen
       ) {
-        state.isOpen = shouldOpen;
+        state.isOpen =
+          shouldOpen;
+
         state.startAngle =
           state.currentAngle;
 
         const targetDegrees =
           shouldOpen
             ? this.data.openAngle *
-              this.data.direction
+              state.direction
             : 0;
 
         state.targetAngle =
@@ -1387,7 +1758,9 @@
         state.isAnimating = true;
       },
 
-      activatePart: function (hitObject) {
+      activatePart: function (
+        hitObject
+      ) {
         const now =
           performance.now();
 
@@ -1399,7 +1772,9 @@
         }
 
         const part =
-          this.findPartFromHit(hitObject);
+          this.findPartFromHit(
+            hitObject
+          );
 
         if (!part) {
           return false;
@@ -1412,13 +1787,12 @@
           return false;
         }
 
-        this.lastActivation = now;
-        this.lastActiveState = state;
+        this.lastActivation =
+          now;
 
-        /*
-          Pressing again always reverses the requested state.
-          This also works while the door is still moving.
-        */
+        this.lastActiveState =
+          state;
+
         this.startDoorAnimation(
           state,
           !state.isOpen
@@ -1445,12 +1819,9 @@
           return false;
         }
 
-        this.lastActivation = now;
+        this.lastActivation =
+          now;
 
-        /*
-          This is the important repeat-use fallback:
-          open -> close -> open -> close, indefinitely.
-        */
         this.startDoorAnimation(
           state,
           !state.isOpen
@@ -1462,51 +1833,64 @@
       easeInOut: function (value) {
         return value < 0.5
           ? 2 * value * value
-          : 1 - Math.pow(-2 * value + 2, 2) / 2;
+          : 1 -
+            Math.pow(
+              -2 * value + 2,
+              2
+            ) / 2;
       },
 
-      tick: function (time, deltaTime) {
+      tick: function (
+        time,
+        deltaTime
+      ) {
         if (!deltaTime) {
           return;
         }
 
-        this.partStates.forEach((state) => {
-          if (!state.isAnimating) {
-            return;
-          }
+        this.partStates.forEach(
+          (state) => {
+            if (!state.isAnimating) {
+              return;
+            }
 
-          state.animationTime += deltaTime;
+            state.animationTime +=
+              deltaTime;
 
-          const progress =
-            Math.min(
-              state.animationTime /
-              this.data.duration,
-              1
-            );
+            const progress =
+              Math.min(
+                state.animationTime /
+                this.data.duration,
+                1
+              );
 
-          const eased =
-            this.easeInOut(progress);
+            const eased =
+              this.easeInOut(
+                progress
+              );
 
-          state.currentAngle =
-            THREE.MathUtils.lerp(
-              state.startAngle,
-              state.targetAngle,
-              eased
-            );
-
-          state.pivot.rotation.y =
-            state.currentAngle;
-
-          if (progress >= 1) {
             state.currentAngle =
-              state.targetAngle;
+              THREE.MathUtils.lerp(
+                state.startAngle,
+                state.targetAngle,
+                eased
+              );
 
             state.pivot.rotation.y =
-              state.targetAngle;
+              state.currentAngle;
 
-            state.isAnimating = false;
+            if (progress >= 1) {
+              state.currentAngle =
+                state.targetAngle;
+
+              state.pivot.rotation.y =
+                state.targetAngle;
+
+              state.isAnimating =
+                false;
+            }
           }
-        });
+        );
       }
     });
 
@@ -2264,17 +2648,17 @@
         const door =
           document.querySelector('#door');
 
-        const pressTarget =
-          document.querySelector(
-            '#doorPressTarget'
-          );
-
         if (!raycaster || !door) {
           return;
         }
 
+        if (raycaster.refreshObjects) {
+          raycaster.refreshObjects();
+        }
+
         /*
-          EXIT VR takes priority over door interaction.
+          EXIT VR takes priority, but only when its small visible
+          button is actually hit by the controller ray.
         */
         const exitIntersection =
           exitButton &&
@@ -2285,22 +2669,13 @@
             : null;
 
         if (exitIntersection) {
-          const scene =
-            this.el.sceneEl;
+          const exitComponent =
+            exitButton.components[
+              'exit-experience'
+            ];
 
-          const exitResult =
-            scene.exitVR();
-
-          if (
-            exitResult &&
-            typeof exitResult.catch === 'function'
-          ) {
-            exitResult.catch((error) => {
-              console.error(
-                'Could not exit VR.',
-                error
-              );
-            });
+          if (exitComponent) {
+            exitComponent.exitExperience();
           }
 
           return;
@@ -2313,36 +2688,22 @@
           return;
         }
 
-        if (raycaster.refreshObjects) {
-          raycaster.refreshObjects();
-        }
-
         const doorIntersection =
           raycaster.getIntersection
             ? raycaster.getIntersection(door)
             : null;
 
-        const targetIntersection =
-          pressTarget &&
-          raycaster.getIntersection
-            ? raycaster.getIntersection(
-                pressTarget
-              )
-            : null;
-
         /*
-          A press does nothing unless the ray is on the visible door
-          or the fixed invisible doorway target.
+          No visible-door hit means no door movement.
         */
-        if (
-          !doorIntersection &&
-          !targetIntersection
-        ) {
+        if (!doorIntersection) {
           return;
         }
 
+        /*
+          Use the exact panel that was pointed at.
+        */
         if (
-          doorIntersection &&
           doorComponent.activatePart(
             doorIntersection.object
           )
@@ -2350,13 +2711,11 @@
           return;
         }
 
-        if (
-          doorComponent.toggleLastDoor()
-        ) {
-          return;
-        }
-
-        doorComponent.activateDefaultPart();
+        /*
+          This fallback is allowed only after the visible door itself
+          was hit, preserving repeated open/close behavior.
+        */
+        doorComponent.toggleLastDoor();
       }
     });
 
@@ -2821,30 +3180,47 @@
           vrMultiplier: 0.3">
 
 
-        <!-- In-headset EXIT VR button -->
-        <a-plane
+        <!-- Small in-headset EXIT VR button -->
+        <a-entity
           id="exitVRButton"
           class="vr-ui"
           vr-only-ui
           visible="false"
-          position="-0.48 0.34 -0.95"
-          width="0.30"
-          height="0.105"
-          material="
-            color: #751f1f;
-            opacity: 0.92;
-            transparent: true;
-            shader: flat;
-            side: double">
+          position="0.62 -0.38 -1.8">
+
+          <!-- Subtle red border -->
+          <a-plane
+            width="0.25"
+            height="0.078"
+            material="
+              color: #8f3030;
+              opacity: 0.85;
+              transparent: true;
+              shader: flat;
+              side: double">
+          </a-plane>
+
+          <!-- Dark button surface -->
+          <a-plane
+            width="0.238"
+            height="0.066"
+            position="0 0 0.002"
+            material="
+              color: #151515;
+              opacity: 0.90;
+              transparent: true;
+              shader: flat;
+              side: double">
+          </a-plane>
 
           <a-text
             value="EXIT VR"
             align="center"
             color="#ffffff"
-            width="1.15"
-            position="0 0 0.006">
+            width="0.78"
+            position="0 0 0.005">
           </a-text>
-        </a-plane>
+        </a-entity>
 
 
         <!-- Desktop object-holding point -->
@@ -2864,8 +3240,8 @@
             fuse: false"
 
           raycaster="
-            objects: .door-press-target, .item;
-            far: 4;
+            objects: #door, #exitVRButton, .item;
+            far: 3;
             interval: 50">
         </a-cursor>
 
@@ -2901,8 +3277,8 @@
           hand: right"
 
         raycaster="
-          objects: .door-press-target, #exitVRButton;
-          far: 3.5;
+          objects: #door, #exitVRButton;
+          far: 3;
           interval: 50;
           showLine: true;
           lineColor: #ffffff;
