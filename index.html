@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <title>VR Room - Mac and VR Door Support</title>
+  <title>Rooms Within - Exit VR, Spatial Audio, Smaller Door Target</title>
 
   <!-- A-Frame -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -68,42 +68,10 @@
   </button>
 
   <!--
-    Native browser audio is used here because it is more reliable
-    on the Quest browser than waiting for an A-Frame sound component
-    to initialise.
+    Footsteps remain a normal audio element because they belong to
+    the player. Room ambience is now emitted by positional A-Frame
+    sound sources placed inside the 3D world.
   -->
-  <audio
-    id="fanAudio"
-    src="sounds/73347__noisecollector__noisy_ceiling_fan.mp3"
-    preload="auto"
-    loop
-    playsinline>
-  </audio>
-
-  <audio
-    id="bedroomRainAudio"
-    src="sounds/bedroom-rain.wav"
-    preload="auto"
-    loop
-    playsinline>
-  </audio>
-
-  <audio
-    id="fluorescentAudio"
-    src="sounds/fluorescent-light.wav"
-    preload="auto"
-    loop
-    playsinline>
-  </audio>
-
-  <audio
-    id="tvStaticAudio"
-    src="sounds/tv-static.mp3"
-    preload="auto"
-    loop
-    playsinline>
-  </audio>
-
   <audio
     id="footstepAudio"
     src="sounds/842186__aardsreal__footstep-floor.wav"
@@ -114,12 +82,77 @@
 
   <script>
     /* ============================================================
-       RELIABLE SOUND BUTTON
+       POSITIONAL SOUND UNLOCK
 
-       The button updates immediately, before any audio loading.
-       All play() calls begin during the same real button click,
-       which is important because browsers block automatic sound.
+       Ambient audio now comes from locations inside the room.
+       Volume and left/right direction change as the listener moves
+       and turns, instead of every sound playing globally at once.
     ============================================================ */
+    function startSpatialEmitter(entity) {
+      const play = () => {
+        const component =
+          entity.components.sound;
+
+        if (!component) {
+          return false;
+        }
+
+        component.playSound();
+        return true;
+      };
+
+      if (play()) {
+        return;
+      }
+
+      const onComponentInitialised = (event) => {
+        if (
+          !event.detail ||
+          event.detail.name !== 'sound'
+        ) {
+          return;
+        }
+
+        entity.removeEventListener(
+          'componentinitialized',
+          onComponentInitialised
+        );
+
+        play();
+      };
+
+      entity.addEventListener(
+        'componentinitialized',
+        onComponentInitialised
+      );
+    }
+
+    async function primeFootstepAudio() {
+      const footsteps =
+        document.querySelector('#footstepAudio');
+
+      if (!footsteps) {
+        return;
+      }
+
+      const finalVolume = 0.18;
+
+      try {
+        footsteps.volume = 0;
+        await footsteps.play();
+        footsteps.pause();
+        footsteps.currentTime = 0;
+        footsteps.volume = finalVolume;
+      } catch (error) {
+        footsteps.volume = finalVolume;
+
+        console.warn(
+          'Footstep audio could not be primed yet.',
+          error
+        );
+      }
+    }
+
     async function enableSound() {
       const button =
         document.querySelector('#soundButton');
@@ -128,88 +161,95 @@
         return;
       }
 
-      button.textContent = 'STARTING SOUND...';
+      button.textContent =
+        'STARTING SOUND...';
+
       button.disabled = true;
 
-      const tracks = [
-        {
-          element: document.querySelector('#fanAudio'),
-          volume: 0.20
-        },
-        {
-          element: document.querySelector('#bedroomRainAudio'),
-          volume: 0.16
-        },
-        {
-          element: document.querySelector('#fluorescentAudio'),
-          volume: 0.12
-        },
-        {
-          element: document.querySelector('#tvStaticAudio'),
-          volume: 0.05
+      try {
+        const context =
+          THREE.AudioContext.getContext();
+
+        if (
+          context &&
+          context.state === 'suspended'
+        ) {
+          await context.resume();
         }
-      ];
+      } catch (error) {
+        console.warn(
+          'Web Audio could not be resumed.',
+          error
+        );
+      }
 
-      const playPromises = tracks.map(({ element, volume }) => {
-        if (!element) {
-          return Promise.reject(
-            new Error('A sound element is missing.')
-          );
-        }
+      await primeFootstepAudio();
 
-        element.volume = volume;
+      const emitters =
+        document.querySelectorAll(
+          '.spatial-sound'
+        );
 
-        return element.play();
-      });
-
-      const results =
-        await Promise.allSettled(playPromises);
-
-      const successful =
-        results.filter(
-          result => result.status === 'fulfilled'
-        ).length;
-
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          console.error(
-            'Sound failed:',
-            tracks[index].element
-              ? tracks[index].element.src
-              : 'missing audio element',
-            result.reason
-          );
-        }
-      });
+      emitters.forEach(
+        startSpatialEmitter
+      );
 
       const scene =
         document.querySelector('a-scene');
 
-      if (successful > 0) {
-        if (scene) {
-          scene.audioUnlocked = true;
-        }
-
-        button.textContent = 'SOUND ENABLED';
-
-        window.setTimeout(() => {
-          button.style.display = 'none';
-        }, 1200);
-
-        console.log(
-          `${successful} ambience sound file(s) started.`
-        );
-      } else {
-        button.textContent = 'TRY SOUND AGAIN';
-        button.disabled = false;
-
-        console.error(
-          'No sound file could start. Check the Network and Console tabs.'
-        );
+      if (scene) {
+        scene.audioUnlocked = true;
       }
+
+      button.textContent =
+        'SOUND ENABLED';
+
+      window.setTimeout(() => {
+        button.style.display = 'none';
+      }, 1200);
+
+      console.log(
+        `${emitters.length} positional ambience source(s) started.`
+      );
     }
 
     window.enableSound = enableSound;
+
+
+    /* ============================================================
+       IN-HEADSET EXIT VR BUTTON
+    ============================================================ */
+    AFRAME.registerComponent('vr-only-ui', {
+      init: function () {
+        const scene =
+          this.el.sceneEl;
+
+        const updateVisibility = () => {
+          this.el.setAttribute(
+            'visible',
+            scene.is('vr-mode')
+          );
+        };
+
+        scene.addEventListener(
+          'enter-vr',
+          () => {
+            window.setTimeout(
+              updateVisibility,
+              0
+            );
+          }
+        );
+
+        scene.addEventListener(
+          'exit-vr',
+          updateVisibility
+        );
+
+        updateVisibility();
+      }
+    });
+
 
     /* ============================================================
        1. FLICKERING LIGHTS
@@ -1123,19 +1163,23 @@
           `${center.x} ${center.y} ${center.z}`
         );
 
+        /*
+          A smaller centre target prevents accidental door clicks
+          while the user is looking or moving around.
+        */
         target.setAttribute(
           'width',
-          Math.max(size.x, 0.3)
+          Math.max(size.x * 0.58, 0.22)
         );
 
         target.setAttribute(
           'height',
-          Math.max(size.y, 0.5)
+          Math.max(size.y * 0.68, 0.55)
         );
 
         target.setAttribute(
           'depth',
-          Math.max(size.z, 0.18)
+          Math.max(size.z * 0.58, 0.12)
         );
 
         target.setAttribute(
@@ -2212,6 +2256,11 @@
         const raycaster =
           this.el.components.raycaster;
 
+        const exitButton =
+          document.querySelector(
+            '#exitVRButton'
+          );
+
         const door =
           document.querySelector('#door');
 
@@ -2221,6 +2270,39 @@
           );
 
         if (!raycaster || !door) {
+          return;
+        }
+
+        /*
+          EXIT VR takes priority over door interaction.
+        */
+        const exitIntersection =
+          exitButton &&
+          raycaster.getIntersection
+            ? raycaster.getIntersection(
+                exitButton
+              )
+            : null;
+
+        if (exitIntersection) {
+          const scene =
+            this.el.sceneEl;
+
+          const exitResult =
+            scene.exitVR();
+
+          if (
+            exitResult &&
+            typeof exitResult.catch === 'function'
+          ) {
+            exitResult.catch((error) => {
+              console.error(
+                'Could not exit VR.',
+                error
+              );
+            });
+          }
+
           return;
         }
 
@@ -2298,7 +2380,7 @@
         this.isPlaying = false;
 
         if (this.audio) {
-          this.audio.volume = 0.30;
+          this.audio.volume = 0.18;
         }
       },
 
@@ -2442,6 +2524,78 @@
         min: 6.5;
         max: 8.5;
         speed: 0.2">
+    </a-entity>
+
+
+    <!-- ======================================================
+         POSITIONAL ROOM AUDIO
+
+         The listener hears direction and distance. Moving away from
+         a source makes it quieter, so ambience no longer piles up
+         at equal volume everywhere.
+    ======================================================= -->
+    <a-entity
+      id="fanSound"
+      class="spatial-sound"
+      position="-3.5 2.4 -1"
+      sound="
+        src: url(sounds/73347__noisecollector__noisy_ceiling_fan.mp3);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.075;
+        distanceModel: inverse;
+        refDistance: 1.4;
+        rolloffFactor: 1.8;
+        maxDistance: 9">
+    </a-entity>
+
+    <a-entity
+      id="bedroomRainSound"
+      class="spatial-sound"
+      position="-3.2 1.7 -3.8"
+      sound="
+        src: url(sounds/bedroom-rain.wav);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.06;
+        distanceModel: inverse;
+        refDistance: 2.2;
+        rolloffFactor: 1.25;
+        maxDistance: 13">
+    </a-entity>
+
+    <a-entity
+      id="fluorescentSound"
+      class="spatial-sound"
+      position="2.5 2.5 1.5"
+      sound="
+        src: url(sounds/fluorescent-light.wav);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.045;
+        distanceModel: inverse;
+        refDistance: 1.2;
+        rolloffFactor: 2;
+        maxDistance: 8">
+    </a-entity>
+
+    <a-entity
+      id="tvStaticSound"
+      class="spatial-sound"
+      position="2.2 1.15 -1.8"
+      sound="
+        src: url(sounds/tv-static.mp3);
+        autoplay: false;
+        loop: true;
+        positional: true;
+        volume: 0.025;
+        distanceModel: inverse;
+        refDistance: 1;
+        rolloffFactor: 2.25;
+        maxDistance: 7">
     </a-entity>
 
 
@@ -2667,6 +2821,32 @@
           vrMultiplier: 0.3">
 
 
+        <!-- In-headset EXIT VR button -->
+        <a-plane
+          id="exitVRButton"
+          class="vr-ui"
+          vr-only-ui
+          visible="false"
+          position="-0.48 0.34 -0.95"
+          width="0.30"
+          height="0.105"
+          material="
+            color: #751f1f;
+            opacity: 0.92;
+            transparent: true;
+            shader: flat;
+            side: double">
+
+          <a-text
+            value="EXIT VR"
+            align="center"
+            color="#ffffff"
+            width="1.15"
+            position="0 0 0.006">
+          </a-text>
+        </a-plane>
+
+
         <!-- Desktop object-holding point -->
         <a-entity
           id="desktopHold"
@@ -2684,8 +2864,8 @@
             fuse: false"
 
           raycaster="
-            objects: #door, .door-press-target, .item;
-            far: 6;
+            objects: .door-press-target, .item;
+            far: 4;
             interval: 50">
         </a-cursor>
 
@@ -2721,8 +2901,8 @@
           hand: right"
 
         raycaster="
-          objects: #door, .door-press-target;
-          far: 6;
+          objects: .door-press-target, #exitVRButton;
+          far: 3.5;
           interval: 50;
           showLine: true;
           lineColor: #ffffff;
